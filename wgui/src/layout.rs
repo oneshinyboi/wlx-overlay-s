@@ -8,7 +8,9 @@ use std::{
 use crate::{
 	animation::Animations,
 	components::{self, Component, ComponentWeak, FocusChangeData, RefreshData},
-	drawing::{self, ANSI_BOLD_CODE, ANSI_RESET_CODE, Boundary, push_scissor_stack, push_transform_stack},
+	drawing::{
+		self, ANSI_BOLD_CODE, ANSI_RESET_CODE, Boundary, PushScissorStackResult, push_scissor_stack, push_transform_stack,
+	},
 	event::{self, CallbackDataCommon, EventAlterables},
 	globals::WguiGlobals,
 	sound::WguiSoundType,
@@ -459,7 +461,10 @@ impl Layout {
 			style,
 		);
 
-		if scissor_result.should_display() {
+		if scissor_result
+			.as_ref()
+			.is_none_or(PushScissorStackResult::should_display)
+		{
 			// check children first
 			self.push_event_children(node_id, event, event_result, alterables, user_data)?;
 
@@ -476,7 +481,9 @@ impl Layout {
 			}
 		}
 
-		alterables.scissor_stack.pop();
+		if scissor_result.is_some() {
+			alterables.scissor_stack.pop();
+		}
 		alterables.transform_stack.pop();
 
 		Ok(())

@@ -306,29 +306,33 @@ impl PushScissorStackResult {
 	}
 }
 
-/// Returns true if scissor has been pushed.
+/// Returns Some() if scissor has been pushed.
 pub fn push_scissor_stack(
 	transform_stack: &mut TransformStack,
 	scissor_stack: &mut ScissorStack,
 	scroll_shift: Vec2,
 	info: &Option<ScrollbarInfo>,
 	style: &taffy::Style,
-) -> PushScissorStackResult {
+) -> Option<PushScissorStackResult> {
 	let mut boundary_absolute = drawing::Boundary::construct_absolute(transform_stack);
 	boundary_absolute.pos += scroll_shift;
 
 	let do_clip = info.is_some() && has_overflow_clip(style);
 
+	if !do_clip {
+		return None; // Don't care
+	}
+
 	scissor_stack.push(ScissorBoundary(boundary_absolute));
 
 	if scissor_stack.is_out_of_bounds() {
-		return PushScissorStackResult::OutOfBounds;
+		return Some(PushScissorStackResult::OutOfBounds);
 	}
 
 	if do_clip {
-		PushScissorStackResult::VisibleAndClip
+		Some(PushScissorStackResult::VisibleAndClip)
 	} else {
-		PushScissorStackResult::VisibleDontClip
+		Some(PushScissorStackResult::VisibleDontClip)
 	}
 }
 
@@ -380,7 +384,9 @@ fn draw_widget(
 	let starting_scissor_set_count = internal.scissor_set_count;
 	let scissor_result = push_scissor_stack(state.transform_stack, state.scissor_stack, scroll_shift, &info, style);
 
-	if scissor_result == PushScissorStackResult::VisibleAndClip {
+	if let Some(scissor_result) = &scissor_result
+		&& *scissor_result == PushScissorStackResult::VisibleAndClip
+	{
 		if params.debug_draw {
 			let mut boundary_relative = drawing::Boundary::construct_relative(state.transform_stack);
 			boundary_relative.pos += scroll_shift;
@@ -403,12 +409,17 @@ fn draw_widget(
 		style,
 	};
 
-	if scissor_result.should_display() {
+	if scissor_result
+		.as_ref()
+		.is_none_or(PushScissorStackResult::should_display)
+	{
 		widget_state.draw_all(state, &draw_params);
 		draw_children(params, state, node_id, internal, false);
 	}
 
-	state.scissor_stack.pop();
+	if scissor_result.is_some() {
+		state.scissor_stack.pop();
+	}
 
 	let current_scissor_set_count = internal.scissor_set_count;
 
