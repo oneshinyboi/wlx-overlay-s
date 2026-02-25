@@ -5487,9 +5487,8 @@ dependencies = [
 
 [[package]]
 name = "super-swipe-engine"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "328d2395160cd56a41ac6a1c77b4587b4604f408d79c67d34ae9f27db67f354c"
+version = "0.1.10"
+source = "git+https://github.com/oneshinyboi/swipeType?tag=v0.1.10#eeb5e7f841d6ac38480986e6a970ca0ae2a78560"
 dependencies = [
  "bincode",
  "codes-iso-639",
