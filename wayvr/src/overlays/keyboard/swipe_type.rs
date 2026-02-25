@@ -21,7 +21,9 @@ pub fn build_key_to_char_point_map(keymap: Option<&XkbKeymap>, layout: &layout::
                 match label.cap_type {
                     KeyCapType::Letter => {
                         if let Some(char) = label.label.iter().next() {
-                            map.insert(char.to_ascii_lowercase().chars().next().unwrap(), Point {x: pos_x as f64, y: pos_y as f64});
+                            let point = Point {x: pos_x as f64, y: pos_y as f64};
+                            println!("char: {} \n point: {:?}\n",char, point);
+                            map.insert(char.to_ascii_lowercase().chars().next().unwrap(), point);
                         }
                     }
                     _ => {}
@@ -29,7 +31,7 @@ pub fn build_key_to_char_point_map(keymap: Option<&XkbKeymap>, layout: &layout::
             }
             pos_x += layout.key_sizes[row_idx][col_idx];
         }
-        pos_y += layout.row_size;
+        pos_y += 1.0;
         pos_x = 0.0;
     }
     map

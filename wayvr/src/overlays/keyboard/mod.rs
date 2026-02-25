@@ -159,11 +159,10 @@ impl KeyboardBackend {
         let mut state = self.default_state.take();
         let layout_name = keymap.and_then(|k| k.get_name()).unwrap_or("us");
 
-        if layout_name == "us" {
-            let point_map = build_key_to_char_point_map(keymap, &self.wlx_layout);
-            state.swipe_engine = SwipeEngine::new(LanguageCode::En, Some(point_map)).and_then(|s| Ok(Some(s))).unwrap_or(None);
-        }
+        let point_map = build_key_to_char_point_map(keymap, &self.wlx_layout);
+        state.swipe_engine = SwipeEngine::new(LanguageCode::En, Some(point_map)).and_then(|s| Ok(Some(s))).unwrap_or(None);
 
+        log::info!("swipe engine created");
         let panel =
             create_keyboard_panel(app, keymap, state, &self.wlx_layout)?;
 

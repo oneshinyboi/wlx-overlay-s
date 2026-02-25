@@ -26,7 +26,7 @@ use wgui::{
     taffy::{self, prelude::length},
     widget::{EventResult, div::WidgetDiv, rectangle::WidgetRectangle},
 };
-
+use crate::overlays::keyboard::layout::KeyData;
 use super::{
     KeyButtonData, KeyState, KeyboardState, handle_press, handle_release,
     layout::{self, KeyCapType},
@@ -109,7 +109,6 @@ pub(super) fn create_keyboard_panel(
                 KeyButtonData::Modifier { modifier, .. } => Some(modifier),
                 _ => None,
             };
-            let key_label: Rc<Vec<String>> = Rc::from(key.label.clone());
 
             // todo: make this easier to maintain somehow
             let mut params: HashMap<Rc<str>, Rc<str>> = HashMap::new();
@@ -173,6 +172,9 @@ pub(super) fn create_keyboard_panel(
                     })
                 };
 
+                let key_cap_type: Rc<KeyCapType> = Rc::from(key.cap_type);
+                let key_label: Rc<Vec<String>> = Rc::from(key.label);
+
                 let width_mul = 1. / my_size_f32;
 
                 panel.add_event_listener(
@@ -180,7 +182,9 @@ pub(super) fn create_keyboard_panel(
                     EventListenerKind::MouseEnter,
                     Box::new({
                         let k = key_state.clone();
-                        move |common, data, _app, _state| {
+                        let k_label = key_label.clone();
+                        let k_cap_type = key_cap_type.clone();
+                        move |common, data, _app, state| {
                             common.alterables.trigger_haptics();
                             on_enter_anim(
                                 k.clone(),
@@ -190,6 +194,16 @@ pub(super) fn create_keyboard_panel(
                                 anim_mult,
                                 width_mul,
                             );
+
+                            if !&state.current_swipe_input.is_empty() {
+                                match k_cap_type.as_ref() {
+                                    KeyCapType::Letter => {
+                                        state.current_swipe_input.push_str(&*k_label.iter().next().unwrap().to_ascii_lowercase())
+                                    }
+                                    _ => {}
+                                }
+
+                            }
                             Ok(EventResult::Pass)
                         }
                     }),
@@ -209,6 +223,7 @@ pub(super) fn create_keyboard_panel(
                                 anim_mult,
                                 width_mul,
                             );
+
                             Ok(EventResult::Pass)
                         }
                     }),
@@ -219,19 +234,20 @@ pub(super) fn create_keyboard_panel(
                     Box::new({
                         let k = key_state.clone();
                         let k_label = key_label.clone();
+                        let k_cap_type = key_cap_type.clone();
                         move |common, data, app, state| {
                             let CallbackMetadata::MouseButton(button) = data.metadata else {
                                 panic!("CallbackMetadata should contain MouseButton!");
                             };
 
                             println!("pressed {:?}", &k_label);
-                            // match key.cap_type {
-                            //     KeyCapType::Letter => {
-                            //         let cloned_label = &key.label.clone();
-                            //         state.current_swipe_input.push_str(cloned_label.iter().next().unwrap())
-                            //     }
-                            //     _ => {}
-                            // }
+                            match k_cap_type.as_ref() {
+                                KeyCapType::Letter => {
+                                    state.current_swipe_input.clear();
+                                    state.current_swipe_input.push_str(&*k_label.iter().next().unwrap().to_ascii_lowercase())
+                                }
+                                _ => {}
+                            }
 
                             handle_press(app, &k, state, button);
                             on_press_anim(k.clone(), common, data);
@@ -245,9 +261,16 @@ pub(super) fn create_keyboard_panel(
                     Box::new({
                         let k = key_state.clone();
                         let k_label = key_label.clone();
+                        let k_cap_type = key_cap_type.clone();
                         move |common, data, app, state| {
                             if handle_release(app, &k, state) {
                                 on_release_anim(k.clone(), common, data);
+                            }
+
+                            if let Some(engine) = &state.swipe_engine {
+                                let prediction = engine.predict(&state.current_swipe_input, None, 5);
+                                println!("swipe path: {}", &state.current_swipe_input);
+                                println!("{:?}", prediction);
                             }
                             println!("released {:?}", &k_label);
                             Ok(EventResult::Pass)
