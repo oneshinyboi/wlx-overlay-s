@@ -30,6 +30,7 @@ use anyhow::Context;
 use glam::{Affine3A, Quat, Vec3, vec3};
 use regex::Regex;
 use slotmap::{SlotMap, new_key_type};
+use super_swipe_engine::SwipeEngine;
 use wgui::{
     drawing,
     event::{InternalStateChangeEvent, MouseButtonEvent, MouseButtonIndex},
@@ -39,9 +40,12 @@ use wlx_common::{
     config::AltModifier,
     overlays::{BackendAttrib, BackendAttribValue},
 };
+use codes_iso_639::part_1::LanguageCode;
+use crate::overlays::keyboard::swipe_type::build_key_to_char_point_map;
 
 pub mod builder;
 mod layout;
+mod swipe_type;
 
 pub const KEYBOARD_NAME: &str = "kbd";
 const AUTO_RELEASE_MODS: [KeyModifier; 5] = [SHIFT, CTRL, ALT, SUPER, META];
@@ -56,6 +60,8 @@ pub fn create_keyboard(app: &mut AppState, wayland: bool) -> anyhow::Result<Over
         overlay_list: OverlayList::default(),
         set_list: SetList::default(),
         clock_12h: app.session.config.clock_12h,
+        swipe_engine: None,
+        current_swipe_input: String::new(),
     };
 
     let auto_labels = layout.auto_labels.unwrap_or(true);
@@ -150,8 +156,16 @@ impl KeyboardBackend {
         keymap: Option<&XkbKeymap>,
         app: &mut AppState,
     ) -> anyhow::Result<KeyboardPanelKey> {
+        let mut state = self.default_state.take();
+        let layout_name = keymap.and_then(|k| k.get_name()).unwrap_or("us");
+
+        if layout_name == "us" {
+            let point_map = build_key_to_char_point_map(keymap, &self.wlx_layout);
+            state.swipe_engine = SwipeEngine::new(LanguageCode::En, Some(point_map)).and_then(|s| Ok(Some(s))).unwrap_or(None);
+        }
+
         let panel =
-            create_keyboard_panel(app, keymap, self.default_state.take(), &self.wlx_layout)?;
+            create_keyboard_panel(app, keymap, state, &self.wlx_layout)?;
 
         let id = self.layout_panels.insert(panel);
         if let Some(layout_name) = keymap.and_then(|k| k.get_name()) {
@@ -327,6 +341,8 @@ struct KeyboardState {
     overlay_list: OverlayList,
     set_list: SetList,
     clock_12h: bool,
+    swipe_engine: Option<SwipeEngine>,
+    current_swipe_input: String,
 }
 
 macro_rules! take_and_leave_default {
@@ -346,6 +362,8 @@ impl KeyboardState {
             overlay_list: OverlayList::default(),
             set_list: SetList::default(),
             clock_12h: self.clock_12h,
+            swipe_engine: None,
+            current_swipe_input: String::new(),
         }
     }
 }

@@ -12,6 +12,7 @@ use crate::{
     windowing::backend::OverlayEventData,
 };
 use anyhow::Context;
+use dbus::arg::Append;
 use glam::{FloatExt, Mat4, Vec2, vec2, vec3};
 use wgui::{
     animation::{Animation, AnimationEasing},
@@ -108,6 +109,7 @@ pub(super) fn create_keyboard_panel(
                 KeyButtonData::Modifier { modifier, .. } => Some(modifier),
                 _ => None,
             };
+            let key_label: Rc<Vec<String>> = Rc::from(key.label.clone());
 
             // todo: make this easier to maintain somehow
             let mut params: HashMap<Rc<str>, Rc<str>> = HashMap::new();
@@ -115,7 +117,7 @@ pub(super) fn create_keyboard_panel(
             params.insert(Rc::from("width"), Rc::from(key_width.to_string()));
             params.insert(Rc::from("height"), Rc::from(key_height.to_string()));
 
-            let mut label = key.label.into_iter();
+            let mut label = key.label.clone().into_iter();
             label
                 .next()
                 .and_then(|s| params.insert("text".into(), s.into()));
@@ -216,10 +218,20 @@ pub(super) fn create_keyboard_panel(
                     EventListenerKind::MousePress,
                     Box::new({
                         let k = key_state.clone();
+                        let k_label = key_label.clone();
                         move |common, data, app, state| {
                             let CallbackMetadata::MouseButton(button) = data.metadata else {
                                 panic!("CallbackMetadata should contain MouseButton!");
                             };
+
+                            println!("pressed {:?}", &k_label);
+                            // match key.cap_type {
+                            //     KeyCapType::Letter => {
+                            //         let cloned_label = &key.label.clone();
+                            //         state.current_swipe_input.push_str(cloned_label.iter().next().unwrap())
+                            //     }
+                            //     _ => {}
+                            // }
 
                             handle_press(app, &k, state, button);
                             on_press_anim(k.clone(), common, data);
@@ -232,10 +244,12 @@ pub(super) fn create_keyboard_panel(
                     EventListenerKind::MouseRelease,
                     Box::new({
                         let k = key_state.clone();
+                        let k_label = key_label.clone();
                         move |common, data, app, state| {
                             if handle_release(app, &k, state) {
                                 on_release_anim(k.clone(), common, data);
                             }
+                            println!("released {:?}", &k_label);
                             Ok(EventResult::Pass)
                         }
                     }),
