@@ -253,6 +253,7 @@ impl HidProvider for UInputProvider {
             log::error!("send_key: {res}");
         }
     }
+
     fn set_desktop_extent(&mut self, extent: Vec2) {
         self.desktop_extent = extent;
     }

@@ -27,6 +27,7 @@ use crate::{
     },
 };
 use anyhow::Context;
+use arboard::Clipboard;
 use glam::{Affine3A, Quat, Vec3, vec3};
 use regex::Regex;
 use slotmap::{SlotMap, new_key_type};
@@ -41,7 +42,8 @@ use wlx_common::{
     overlays::{BackendAttrib, BackendAttribValue},
 };
 use codes_iso_639::part_1::LanguageCode;
-use crate::overlays::keyboard::swipe_type::build_key_to_char_point_map;
+use crate::overlays::keyboard::layout::KeyCapType;
+use crate::overlays::keyboard::swipe_type::{copy_text_to_primary_clipboard, create_new_swipe_engine};
 
 pub mod builder;
 mod layout;
@@ -62,6 +64,10 @@ pub fn create_keyboard(app: &mut AppState, wayland: bool) -> anyhow::Result<Over
         clock_12h: app.session.config.clock_12h,
         swipe_engine: None,
         current_swipe_input: String::new(),
+        is_swiping: false,
+        last_pressed_key_label: String::new(),
+        clipboard: Clipboard::new()?,
+        last_swiped_word: None
     };
 
     let auto_labels = layout.auto_labels.unwrap_or(true);
@@ -157,10 +163,14 @@ impl KeyboardBackend {
         app: &mut AppState,
     ) -> anyhow::Result<KeyboardPanelKey> {
         let mut state = self.default_state.take();
-        let layout_name = keymap.and_then(|k| k.get_name()).unwrap_or("us");
 
-        let point_map = build_key_to_char_point_map(keymap, &self.wlx_layout);
-        state.swipe_engine = SwipeEngine::new(LanguageCode::En, Some(point_map)).and_then(|s| Ok(Some(s))).unwrap_or(None);
+        state.swipe_engine =  match create_new_swipe_engine(&keymap, &self.wlx_layout) {
+            Ok(engine) => Some(engine),
+            Err(e) => {
+                log::error!("Error occured while trying to load swipe engine: {:?}", e);
+                None
+            }
+        };
 
         log::info!("swipe engine created");
         let panel =
@@ -189,24 +199,31 @@ impl KeyboardBackend {
             if self.active_layout.eq(new_key) {
                 return Ok(false);
             }
-            self.internal_switch_keymap(*new_key);
+            self.internal_switch_keymap(*new_key, keymap);
         } else {
             let new_key = self.add_new_keymap(Some(keymap), app)?;
-            self.internal_switch_keymap(new_key);
+            self.internal_switch_keymap(new_key, keymap);
         }
         app.tasks
             .enqueue(TaskType::Overlay(OverlayTask::KeyboardChanged));
         Ok(true)
     }
 
-    fn internal_switch_keymap(&mut self, new_key: KeyboardPanelKey) {
-        let state_from = self
+    fn internal_switch_keymap(&mut self, new_key: KeyboardPanelKey, keymap: &XkbKeymap) {
+        let mut state_from = self
             .layout_panels
             .get_mut(self.active_layout)
             .unwrap()
             .state
             .take();
 
+        state_from.swipe_engine =  match create_new_swipe_engine(&Some(keymap), &self.wlx_layout) {
+            Ok(engine) => Some(engine),
+            Err(e) => {
+                log::error!("Error occured while trying to load swipe engine: {:?}", e);
+                None
+            }
+        };
         self.active_layout = new_key;
 
         self.layout_panels
@@ -340,8 +357,15 @@ struct KeyboardState {
     overlay_list: OverlayList,
     set_list: SetList,
     clock_12h: bool,
+
+    // todo move all this swipe stuff into its own class
     swipe_engine: Option<SwipeEngine>,
     current_swipe_input: String,
+    last_pressed_key_label: String,
+    is_swiping: bool,
+    clipboard: Clipboard,
+    last_swiped_word: Option<String>
+
 }
 
 macro_rules! take_and_leave_default {
@@ -363,6 +387,10 @@ impl KeyboardState {
             clock_12h: self.clock_12h,
             swipe_engine: None,
             current_swipe_input: String::new(),
+            is_swiping: false,
+            last_pressed_key_label: String::new(),
+            clipboard: Clipboard::new().unwrap(),
+            last_swiped_word: None
         }
     }
 }
@@ -403,26 +431,51 @@ enum KeyButtonData {
     },
 }
 
+fn handle_enter(key: &KeyState, key_label: &Vec<String>, key_cap_type: &KeyCapType, keyboard: &mut KeyboardState) {
+    if let Some(_) = keyboard.swipe_engine.as_ref() && *key_cap_type == KeyCapType::Letter {
+        if *key_label.iter().next().unwrap() != keyboard.last_pressed_key_label {
+            keyboard.is_swiping = true;
+        }
+        if keyboard.is_swiping {
+            match &key.button_state {
+                KeyButtonData::Key { vk, pressed } => {
+                    keyboard.current_swipe_input.push_str(&*key_label.iter().next().unwrap().to_ascii_lowercase())
+                }
+                _ => {}
+            }
+        }
+    }
+}
 fn handle_press(
     app: &mut AppState,
     key: &KeyState,
+    key_cap_type: &KeyCapType,
+    key_label: &Vec<String>,
     keyboard: &mut KeyboardState,
     button: MouseButtonEvent,
 ) {
+    keyboard.is_swiping = false;
     match &key.button_state {
         KeyButtonData::Key { vk, pressed } => {
-            keyboard.modifiers |= match button.index {
-                MouseButtonIndex::Right => SHIFT,
-                MouseButtonIndex::Middle => keyboard.alt_modifier,
-                _ => 0,
-            };
-
-            app.hid_provider
-                .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
-            app.hid_provider
-                .send_key_routed(app.wvr_server.as_mut(), *vk, true);
-            pressed.set(true);
-            play_key_click(app);
+            if let Some(_) = keyboard.swipe_engine.as_ref() && *key_cap_type == KeyCapType::Letter {
+                let actual_label = key_label.iter().next().unwrap();
+                keyboard.last_pressed_key_label = actual_label.clone();
+                keyboard.current_swipe_input.clear();
+                keyboard.current_swipe_input.push_str(&*actual_label.to_ascii_lowercase())
+            }
+            else {
+                keyboard.modifiers |= match button.index {
+                    MouseButtonIndex::Right => SHIFT,
+                    MouseButtonIndex::Middle => keyboard.alt_modifier,
+                    _ => 0,
+                };
+                app.hid_provider
+                    .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
+                app.hid_provider
+                    .send_key_routed(app.wvr_server.as_mut(), *vk, true);
+                pressed.set(true);
+                play_key_click(app);
+            }
         }
         KeyButtonData::Modifier { modifier, sticky } => {
             sticky.set(keyboard.modifiers & *modifier == 0);
@@ -452,20 +505,54 @@ fn handle_press(
     }
 }
 
-fn handle_release(app: &mut AppState, key: &KeyState, keyboard: &mut KeyboardState) -> bool {
+fn handle_release(app: &mut AppState, key: &KeyState, k_cap_type: &KeyCapType, keyboard: &mut KeyboardState) -> bool {
     match &key.button_state {
         KeyButtonData::Key { vk, pressed } => {
-            pressed.set(false);
+            if let Some(engine) = keyboard.swipe_engine.as_ref() && *k_cap_type == KeyCapType::Letter {
+                if keyboard.is_swiping {
+                    if !keyboard.current_swipe_input.is_empty() {
+                        let prediction = engine.predict(&*keyboard.current_swipe_input, keyboard.last_swiped_word.as_ref().map(|x| x.as_str()), 5);
+                        keyboard.current_swipe_input.clear();
+                        println!("swipe path: {}", keyboard.current_swipe_input);
+                        println!("{:?}", prediction);
 
-            for m in &AUTO_RELEASE_MODS {
-                if keyboard.modifiers & *m != 0 {
-                    keyboard.modifiers &= !*m;
+                        let best_prediction = prediction.first().unwrap().word.as_ref();
+
+                        copy_text_to_primary_clipboard(best_prediction, &mut keyboard.clipboard);
+                        app.hid_provider
+                            .set_modifiers_routed(app.wvr_server.as_mut(), SHIFT);
+                        app.hid_provider
+                            .send_key_routed(app.wvr_server.as_mut(), VirtualKey::Insert, true);
+                        app.hid_provider
+                            .send_key_routed(app.wvr_server.as_mut(), VirtualKey::Insert, false);
+                        app.hid_provider
+                            .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
+                        keyboard.last_swiped_word = Some(best_prediction.parse().unwrap())
+                    }
                 }
+                else { // pointer must have been released on the same key it was pressed on
+                    app.hid_provider
+                        .send_key_routed(app.wvr_server.as_mut(), *vk, true);
+                    pressed.set(true);
+                    app.hid_provider
+                        .send_key_routed(app.wvr_server.as_mut(), *vk, false);
+                    play_key_click(app);
+                }
+
             }
-            app.hid_provider
-                .send_key_routed(app.wvr_server.as_mut(), *vk, false);
-            app.hid_provider
-                .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
+            else {
+                pressed.set(false);
+
+                for m in &AUTO_RELEASE_MODS {
+                    if keyboard.modifiers & *m != 0 {
+                        keyboard.modifiers &= !*m;
+                    }
+                }
+                app.hid_provider
+                    .send_key_routed(app.wvr_server.as_mut(), *vk, false);
+                app.hid_provider
+                    .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
+            }
             true
         }
         KeyButtonData::Modifier { modifier, sticky } => {

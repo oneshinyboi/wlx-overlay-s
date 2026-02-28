@@ -231,7 +231,7 @@ pub(super) struct KeyData {
     pub(super) cap_type: KeyCapType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum KeyCapType {
     /// Label an SVG
     Special,
