@@ -50,7 +50,6 @@ use crate::overlays::keyboard::swipe_type::SwipeTypingManager;
 pub mod builder;
 mod layout;
 mod swipe_type;
-
 pub const KEYBOARD_NAME: &str = "kbd";
 const AUTO_RELEASE_MODS: [KeyModifier; 5] = [SHIFT, CTRL, ALT, SUPER, META];
 const SYSTEM_LAYOUT_ALIASES: [&str; 5] = ["mozc", "pinyin", "hangul", "sayura", "unikey"];

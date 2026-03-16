@@ -7410,6 +7410,7 @@ dependencies = [
  "wayvr-ipc",
  "wgui",
  "winit",
+ "wl-clipboard-rs",
  "wlx-capture",
  "wlx-common",
  "xcb",

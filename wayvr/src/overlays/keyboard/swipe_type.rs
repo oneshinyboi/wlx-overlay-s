@@ -1,17 +1,33 @@
+use std::io::Write;
 use crate::state::AppState;
-use crate::subsystem::hid::{KeyModifier, VirtualKey, CTRL};
-use anyhow::{anyhow, bail};
-use arboard::Clipboard;
+use crate::subsystem::hid::{KeyModifier, VirtualKey, CTRL, MOUSE_MIDDLE, SHIFT};
+use anyhow::{bail};
+use arboard::{Clipboard, LinuxClipboardKind, SetExtLinux};
 use glam::Vec2;
 use std::mem;
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, channel, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use super_swipe_type::keyboard_manager::QwertyKeyboardGrid;
 use super_swipe_type::swipe_orchestrator::SwipeOrchestrator;
-use super_swipe_type::{SwipeCandidate, SwipePoint};
+use super_swipe_type::{SwipePoint};
+use wl_clipboard_rs::utils::is_primary_selection_supported;
 
 const PREDICTION_SUGGESTION_COUNT: usize = 5;
+
+fn get_supported_clipboard_type() -> anyhow::Result<LinuxClipboardKind> {
+    if !std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        Ok(LinuxClipboardKind::Primary)
+    }
+    else if let Ok(supported) = is_primary_selection_supported()
+    && supported{
+        println!("using primary");
+        Ok(LinuxClipboardKind::Primary)
+    } else {
+        Ok(LinuxClipboardKind::Clipboard)
+    }
+}
 
 enum PredictionTask {
     Predict {
@@ -29,6 +45,7 @@ pub struct SwipeTypingManager {
     worker_thread: Option<JoinHandle<()>>,
     swipe_start_time: Option<Instant>,
     clipboard: Clipboard,
+    clipboard_kind: LinuxClipboardKind,
     swipe_left_first_key: bool,
     first_swipe_char: char,
     current_swipe_device: Option<usize>,
@@ -43,8 +60,25 @@ impl SwipeTypingManager {
 
     pub fn select_word(&mut self, word: &String, app: &mut AppState, original_keyboard_mods: KeyModifier) {
         self.last_swiped_word = Some(word.clone());
-        if let Ok(_) = self.copy_text_to_primary_clipboard(word.as_ref()) {
-            Self::paste(app, original_keyboard_mods);
+        self.clipboard = Clipboard::new().unwrap();
+        if let Ok(_) = self.copy_text_to_clipboard(word.as_ref()) {
+
+            let mut child = Command::new("wl-copy")
+                .arg("-p")
+                .stdin(Stdio::piped())
+                .spawn().unwrap();
+
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(word.as_bytes()).unwrap();
+                // stdin is dropped here, closing the pipe
+            }
+
+            // Wait for the process to finish
+            child.wait().unwrap();
+
+            self.paste(app, original_keyboard_mods);
+        } else {
+            println!("waaaaaaaaaaaaaaaa");
         }
     }
 
@@ -59,19 +93,31 @@ impl SwipeTypingManager {
             .set_modifiers_routed(app.wvr_server.as_mut(), original_keyboard_mods);
     }
 
-    fn paste(app: &mut AppState, original_keyboard_mods: KeyModifier) {
-        app.hid_provider
-            .set_modifiers_routed(app.wvr_server.as_mut(), CTRL);
-        app.hid_provider
-            .send_key_routed(app.wvr_server.as_mut(), VirtualKey::V, true);
-        app.hid_provider
-            .send_key_routed(app.wvr_server.as_mut(), VirtualKey::V, false);
-        app.hid_provider
-            .set_modifiers_routed(app.wvr_server.as_mut(), original_keyboard_mods);
+    fn paste(&self, app: &mut AppState, original_keyboard_mods: KeyModifier) {
+        thread::sleep(Duration::from_millis(100));
+        match self.clipboard_kind {
+            LinuxClipboardKind::Primary => {
+                app.hid_provider.inner.send_button(MOUSE_MIDDLE, true);
+                thread::sleep(Duration::from_millis(10));
+                app.hid_provider.inner.send_button(MOUSE_MIDDLE, false);
+            },
+            LinuxClipboardKind::Clipboard => {
+                app.hid_provider
+                    .set_modifiers_routed(app.wvr_server.as_mut(), CTRL);
+                app.hid_provider
+                    .send_key_routed(app.wvr_server.as_mut(), VirtualKey::V, true);
+                app.hid_provider
+                    .send_key_routed(app.wvr_server.as_mut(), VirtualKey::V, false);
+                app.hid_provider
+                    .set_modifiers_routed(app.wvr_server.as_mut(), original_keyboard_mods);
+            },
+            LinuxClipboardKind::Secondary => {
+                return; // unsupported, should not reach here
+            }
+        }
     }
-
-    fn copy_text_to_primary_clipboard(&mut self, text: &str) -> Result<(), arboard::Error> {
-        self.clipboard.set_text(format!("{text} "))
+    fn copy_text_to_clipboard(&mut self, text: &str) -> Result<(), arboard::Error> {
+        self.clipboard.set().clipboard(self.clipboard_kind).text(format!("{text} "))
     }
 
     pub fn new() -> anyhow::Result<(SwipeTypingManager, Receiver<Option<Vec<String>>>)> {
@@ -121,6 +167,7 @@ impl SwipeTypingManager {
                 worker_thread: Some(worker_thread),
                 swipe_start_time: None,
                 clipboard: Clipboard::new()?,
+                clipboard_kind: get_supported_clipboard_type()?,
                 swipe_left_first_key: false,
                 first_swipe_char: char::default(),
                 current_swipe_device: None,
@@ -180,6 +227,12 @@ impl SwipeTypingManager {
 
     pub fn add_swipe(&mut self, within_key_pos_normalized: &Vec2, key_label: char, device: usize) {
         if let Some(pos) = self.keyboard_gird.key_positions.get(&key_label.to_ascii_lowercase()) {
+            if let Some(current_device) = self.current_swipe_device {
+                if current_device != device {
+                    return;
+                }
+            }
+
             if self.first_swipe_char != char::default()
                 && self.first_swipe_char != key_label.to_ascii_lowercase()
             {
@@ -196,11 +249,7 @@ impl SwipeTypingManager {
                 None => self.start_swipe(key_label, device),
             };
 
-            if let Some(current_device) = self.current_swipe_device {
-                if current_device != device {
-                    return;
-                }
-            }
+
 
             let within_key_pos_from_center = Vec2 {
                 x: within_key_pos_normalized.x - 0.5,
