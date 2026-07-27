@@ -26,9 +26,23 @@ pub mod frag_screen {
     }
 }
 
+pub mod frag_simple {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        path: "src/shaders/simple.frag",
+    }
+}
+
 pub mod frag_srgb {
     vulkano_shaders::shader! {
         ty: "fragment",
         path: "src/shaders/srgb.frag",
+    }
+}
+
+pub mod frag_sky {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        path: "src/shaders/sky.frag",
     }
 }

@@ -11,7 +11,7 @@ use wgui::{
 	globals::WguiGlobals,
 	i18n::Translation,
 	layout::{Layout, WidgetID},
-	renderer_vk::text::{FontWeight, HorizontalAlign, TextShadow, TextStyle, custom_glyph::CustomGlyphData},
+	renderer_vk::text::{FontWeight, HorizontalAlign, TextStyle, WguiTextShadow, custom_glyph::CustomGlyphData},
 	taffy::{
 		self, AlignItems, AlignSelf, JustifyContent, JustifySelf,
 		prelude::{auto, length, percent},
@@ -30,6 +30,7 @@ use wlx_common::async_executor::AsyncExecutor;
 use crate::util::{
 	cached_fetcher::{self, CoverArt},
 	steam_utils::{self, AppID},
+	wgui_simple,
 };
 
 pub struct ViewCommon {
@@ -48,6 +49,7 @@ pub struct Params<'a, 'b> {
 pub struct View {
 	pub button: Rc<ComponentButton>,
 	id_image_parent: WidgetID,
+	id_loading: WidgetID,
 	app_name: String,
 	app_id: AppID,
 }
@@ -59,12 +61,8 @@ const GAME_COVER_SIZE_X: f32 = 140.0;
 const GAME_COVER_SIZE_Y: f32 = 210.0;
 
 impl View {
-	async fn request_cover_image(
-		executor: AsyncExecutor,
-		manifest: steam_utils::AppManifest,
-		on_loaded: Box<dyn FnOnce(CoverArt)>,
-	) {
-		let cover_art = match cached_fetcher::request_image(executor, manifest.app_id.clone()).await {
+	async fn request_cover_image(manifest: steam_utils::AppManifest, on_loaded: Box<dyn FnOnce(CoverArt)>) {
+		let cover_art = match cached_fetcher::request_image(manifest.app_id.clone()).await {
 			Ok(cover_art) => cover_art,
 			Err(e) => {
 				log::error!("request_cover_image failed: {:?}", e);
@@ -105,16 +103,17 @@ impl View {
 				content: Translation::from_raw_text(text),
 				style: TextStyle {
 					weight: Some(FontWeight::Bold),
+					color: Some(drawing::Color::new(1.0, 1.0, 1.0, 1.0).into()),
 					wrap: true,
 					size: Some(16.0),
 					align: Some(HorizontalAlign::Center),
-					shadow: Some(TextShadow {
-						color: drawing::Color::new(0.0, 0.0, 0.0, 1.0),
-						x: 2.0,
-						y: 2.0,
+					shadow: Some(WguiTextShadow {
+						color: drawing::Color::new(0.0, 0.0, 0.0, 1.0).into(),
+						..Default::default()
 					}),
 					..Default::default()
 				},
+				..Default::default()
 			},
 		);
 
@@ -123,8 +122,8 @@ impl View {
 			label,
 			taffy::Style {
 				position: taffy::Position::Absolute,
-				align_self: Some(AlignSelf::Baseline),
-				justify_self: Some(JustifySelf::Center),
+				align_self: Some(AlignSelf::BASELINE),
+				justify_self: Some(JustifySelf::CENTER),
 				margin: taffy::Rect {
 					top: length(32.0),
 					bottom: auto(),
@@ -143,6 +142,8 @@ impl View {
 		layout: &mut Layout,
 		cover_art: &CoverArt,
 	) -> anyhow::Result<()> {
+		layout.remove_widget(self.id_loading);
+
 		if cover_art.compressed_image_data.is_empty() {
 			// mount placeholder
 			let img = view_common.get_placeholder_image()?.clone();
@@ -169,9 +170,9 @@ impl View {
 		let (widget_button, button) = components::button::construct(
 			params.ess,
 			components::button::Params {
-				color: Some(drawing::Color::new(1.0, 1.0, 1.0, 0.0)),
-				border_color: Some(BORDER_COLOR_DEFAULT),
-				hover_border_color: Some(BORDER_COLOR_HOVERED),
+				color: Some(drawing::Color::new(1.0, 1.0, 1.0, 0.0).into()),
+				border_color: Some(BORDER_COLOR_DEFAULT.into()),
+				hover_border_color: Some(BORDER_COLOR_HOVERED.into()),
 				round: WLength::Units(12.0),
 				border: 2.0,
 				tooltip: Some(TooltipInfo {
@@ -180,8 +181,8 @@ impl View {
 				}),
 				style: taffy::Style {
 					position: taffy::Position::Relative,
-					align_items: Some(taffy::AlignItems::Center),
-					justify_content: Some(taffy::JustifyContent::Center),
+					align_items: Some(AlignItems::CENTER),
+					justify_content: Some(JustifyContent::CENTER),
 					size: taffy::Size {
 						width: length(GAME_COVER_SIZE_X * params.scale),
 						height: length(GAME_COVER_SIZE_Y * params.scale),
@@ -202,16 +203,16 @@ impl View {
 					height: percent(1.0),
 				},
 				padding: taffy::Rect::length(2.0),
-				align_items: Some(AlignItems::Center),
-				justify_content: Some(JustifyContent::Center),
+				align_items: Some(AlignItems::CENTER),
+				justify_content: Some(JustifyContent::CENTER),
 				..Default::default()
 			},
 		)?;
 
 		let rect_gradient = |color: drawing::Color, color2: drawing::Color| {
 			rectangle::WidgetRectangle::create(rectangle::WidgetRectangleParams {
-				color,
-				color2,
+				color: color.into(),
+				color2: color2.into(),
 				round: WLength::Units(12.0),
 				gradient: GradientMode::Vertical,
 				..Default::default()
@@ -235,7 +236,7 @@ impl View {
 				drawing::Color::new(1.0, 1.0, 1.0, 0.2),
 				drawing::Color::new(1.0, 1.0, 1.0, 0.02),
 			),
-			rect_gradient_style(taffy::AlignSelf::Baseline, 0.05),
+			rect_gradient_style(taffy::AlignSelf::BASELINE, 0.05),
 		)?;
 
 		// not optimal, this forces us to create a new pass for every created cover art just to overlay various rectangles at the top of the image cover art
@@ -248,7 +249,7 @@ impl View {
 				drawing::Color::new(1.0, 1.0, 1.0, 0.15),
 				drawing::Color::new(1.0, 1.0, 1.0, 0.0),
 			),
-			rect_gradient_style(taffy::AlignSelf::Baseline, 0.5),
+			rect_gradient_style(taffy::AlignSelf::BASELINE, 0.5),
 		)?;
 
 		// bottom black gradient
@@ -258,7 +259,7 @@ impl View {
 				drawing::Color::new(0.0, 0.0, 0.0, 0.0),
 				drawing::Color::new(0.0, 0.0, 0.0, 0.25),
 			),
-			rect_gradient_style(taffy::AlignSelf::End, 0.5),
+			rect_gradient_style(taffy::AlignSelf::END, 0.5),
 		)?;
 
 		// bottom shadow
@@ -268,14 +269,19 @@ impl View {
 				drawing::Color::new(0.0, 0.0, 0.0, 0.1),
 				drawing::Color::new(0.0, 0.0, 0.0, 0.9),
 			),
-			rect_gradient_style(taffy::AlignSelf::End, 0.05),
+			rect_gradient_style(taffy::AlignSelf::END, 0.05),
 		)?;
+
+		let id_loading = wgui_simple::create_loading(wgui_simple::CreateLoadingParams {
+			layout: params.ess.layout,
+			parent_id: image_parent.id,
+			with_text: false,
+		})?;
 
 		// request cover image data from the internet or disk cache
 		params
 			.executor
 			.spawn(View::request_cover_image(
-				params.executor.clone(),
 				params.manifest.clone(),
 				Box::new(params.on_loaded),
 			))
@@ -286,6 +292,7 @@ impl View {
 			id_image_parent: image_parent.id,
 			app_name: params.manifest.name.clone(),
 			app_id: params.manifest.app_id.clone(),
+			id_loading,
 		})
 	}
 }

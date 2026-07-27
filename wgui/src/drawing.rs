@@ -102,7 +102,7 @@ impl Boundary {
 	}
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Color {
 	pub r: f32,
 	pub g: f32,
@@ -119,7 +119,7 @@ impl Color {
 	}
 
 	#[must_use]
-	pub fn add_rgb(&self, n: f32) -> Self {
+	pub const fn add_rgb(&self, n: f32) -> Self {
 		Self {
 			r: self.r + n,
 			g: self.g + n,
@@ -129,7 +129,7 @@ impl Color {
 	}
 
 	#[must_use]
-	pub fn mult_rgb(&self, n: f32) -> Self {
+	pub const fn mult_rgb(&self, n: f32) -> Self {
 		Self {
 			r: self.r * n,
 			g: self.g * n,
@@ -139,7 +139,7 @@ impl Color {
 	}
 
 	#[must_use]
-	pub fn lerp(&self, other: &Self, n: f32) -> Self {
+	pub const fn lerp(&self, other: &Self, n: f32) -> Self {
 		Self {
 			r: self.r * (1.0 - n) + other.r * n,
 			g: self.g * (1.0 - n) + other.g * n,
@@ -180,8 +180,79 @@ impl Color {
 	}
 
 	#[must_use]
+	pub fn to_hex_rgb(&self) -> String {
+		let r = (self.r.clamp(0.0, 1.0) * 255.0).round() as u8;
+		let g = (self.g.clamp(0.0, 1.0) * 255.0).round() as u8;
+		let b = (self.b.clamp(0.0, 1.0) * 255.0).round() as u8;
+		format!("#{r:02X}{g:02X}{b:02X}")
+	}
+
+	#[must_use]
 	pub const fn as_arr(&self) -> [f32; 4] {
 		[self.r, self.b, self.g, self.a]
+	}
+
+	// expects strings like "#424242" or "#424242FF"
+	pub const fn from_hex(html_hex: &str) -> Option<drawing::Color> {
+		const fn hex_nibble(byte: u8) -> Option<u8> {
+			match byte {
+				b'0'..=b'9' => Some(byte - b'0'),
+				b'a'..=b'f' => Some(byte - b'a' + 10),
+				b'A'..=b'F' => Some(byte - b'A' + 10),
+				_ => None,
+			}
+		}
+
+		const fn hex_byte(high: u8, low: u8) -> Option<u8> {
+			let high = match hex_nibble(high) {
+				Some(value) => value,
+				None => return None,
+			};
+
+			let low = match hex_nibble(low) {
+				Some(value) => value,
+				None => return None,
+			};
+
+			Some((high << 4) | low)
+		}
+
+		let bytes = html_hex.as_bytes();
+
+		if (bytes.len() != 7 && bytes.len() != 9) || bytes[0] != b'#' {
+			return None;
+		}
+
+		let r = match hex_byte(bytes[1], bytes[2]) {
+			Some(value) => value,
+			None => return None,
+		};
+
+		let g = match hex_byte(bytes[3], bytes[4]) {
+			Some(value) => value,
+			None => return None,
+		};
+
+		let b = match hex_byte(bytes[5], bytes[6]) {
+			Some(value) => value,
+			None => return None,
+		};
+
+		let a = if bytes.len() == 9 {
+			match hex_byte(bytes[7], bytes[8]) {
+				Some(value) => value,
+				None => return None,
+			}
+		} else {
+			255
+		};
+
+		Some(drawing::Color::new(
+			r as f32 / 255.0,
+			g as f32 / 255.0,
+			b as f32 / 255.0,
+			a as f32 / 255.0,
+		))
 	}
 }
 
@@ -189,6 +260,69 @@ impl Default for Color {
 	fn default() -> Self {
 		// opaque black
 		Self::new(0.0, 0.0, 0.0, 1.0)
+	}
+}
+
+pub struct HsvColor {
+	pub h: f32,
+	pub s: f32,
+	pub v: f32,
+	pub a: f32,
+}
+
+#[allow(clippy::many_single_char_names)]
+impl HsvColor {
+	pub const fn new(h: f32, s: f32, v: f32, a: f32) -> Self {
+		Self { h, s, v, a }
+	}
+
+	pub fn to_rgb(&self) -> Color {
+		if self.s == 0.0 {
+			// gray
+			return Color::new(self.v, self.v, self.v, 1.0);
+		}
+
+		let h6 = self.h * 6.0;
+		let i = h6.floor();
+		let f = h6 - i;
+
+		let p = self.v * (1.0 - self.s);
+		let q = self.v * (1.0 - self.s * f);
+		let t = self.v * (1.0 - self.s * (1.0 - f));
+
+		let (r, g, b) = match i as i32 % 6 {
+			0 => (self.v, t, p),
+			1 => (q, self.v, p),
+			2 => (p, self.v, t),
+			3 => (p, q, self.v),
+			4 => (t, p, self.v),
+			_ => (self.v, p, q),
+		};
+
+		Color::new(r, g, b, 1.0)
+	}
+}
+
+impl From<Color> for HsvColor {
+	fn from(value: Color) -> Self {
+		let max = value.r.max(value.g).max(value.b);
+		let min = value.r.min(value.g).min(value.b);
+		let delta = max - min;
+
+		let h = if delta == 0.0 {
+			0.0
+		} else if max == value.r {
+			(((value.g - value.b) / delta) / 6.0 + 1.0) % 1.0
+		} else if max == value.g {
+			((value.b - value.r) / delta + 2.0) / 6.0
+		} else {
+			((value.r - value.g) / delta + 4.0) / 6.0
+		};
+
+		let s = if max == 0.0 { 0.0 } else { delta / max };
+		let v = max;
+
+		Self::new(h, s, v, value.a)
 	}
 }
 
@@ -218,6 +352,7 @@ pub struct Rectangle {
 pub struct ImagePrimitive {
 	pub content: CustomGlyphData,
 	pub content_key: usize,
+	pub skip_cache: bool,
 
 	pub border: f32, // width in pixels
 	pub border_color: Color,

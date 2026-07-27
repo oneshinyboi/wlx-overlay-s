@@ -11,10 +11,10 @@
 		"EDIT_MODE_TOGGLE": "Toggle edit mode",
 		"FORCE_CLOSE_APP": "Force close app",
 		"HANDSFREE": {
-			"EYE_ONLY": "Eye only",
+			"EYE_ONLY": "Eye laser",
 			"EYE_TRACKING": "Eye + pinch",
 			"HMD": "HMD + pinch",
-			"HMD_ONLY": "HMD only",
+			"HMD_ONLY": "HMD laser",
 			"NONE": "Off",
 			"TITLE": "Handsfree mode"
 		},
@@ -64,6 +64,7 @@
 		"POS_STATIC": "Static: Not part of any set, no recenter.",
 		"POSITIONING": "Positioning",
 		"RESIZE_PRESS_AND_DRAG": "Resize (press & drag)",
+		"RESIZE_CORNER": "Drag to resize",
 		"STEREO_3D_MODE": {
 			"ADJUST_MOUSE": "Adjust mouse",
 			"FULL_FRAME": "Full 3D",
@@ -77,6 +78,22 @@
 			"TITLE": "3D Stereo Mode"
 		}
 	},
+	"ALTTAB": {
+		"RELEASE_TO_FOCUS": "Aim at an app and release Super to focus that app.",
+		"WHILE_AIMING": "While aiming",
+		"CLICK": "VR pointer click",
+		"GRABALL": "Move entire set",
+		"GRAB": "Move individual overlay",
+		"DASH": "Toggle dashboard",
+		"EDIT": "Toggle edit mode",
+		"SET": "Switch set",
+		"RECENTER": "Show/hide/recenter",
+		"GENERAL_BINDS": "General bindings",
+		"TOGGLE_CAPTURE": "Give control back to desktop",
+		"FOCUS_MODE": "Focus mode (hold Super)",
+		"CLOSE": "Close focused app",
+		"MOUSE": "Real mouse clicks & scroll also translate to VR pointer"
+	},
 	"GRAB": {
 		"ADJUST_DISTANCE": "Adjust distance",
 		"ADJUST_SIZE": "Adjust size",
@@ -88,7 +105,15 @@
 		"GRABBING_WATCH": "To swap hands, move the watch in front and grab it with the other hand.",
 		"UNRESTRICTED_MOVEMENT": "Unrestricted movement"
 	},
+	"SCREENCAST": {
+		"PENDING": "Please wait...",
+		"QUEUED": "Waiting for a different overlay's screen cast pop-up to be approved.",
+		"WAITING_FOR_USER_DESC": "Check your dekstop for a screen cast pop-up.\nSelect the following:",
+		"WAITING_FOR_USER": "Check your desktop for a screen cast pop-up.",
+		"FAIL": "Could not initialize screen cast source."
+	},
 	"TOAST": {
+		"TITLE_SCREENCAST_FAIL": "Could not start screen cast source!",
 		"CANNOT_ADD_SET": "Cannot add set!",
 		"CANNOT_REMOVE_SET": "Cannot remove set!",
 		"DEFAULT_TITLE": "Notification",
@@ -96,7 +121,7 @@
 		"ERROR": "Error",
 		"FIXING_FLOOR_IN_X_SECS": "Fixing floor in {SECONDS} second(s)...",
 		"LAST_EXISTING_SET": "This is the last existing set.",
-		"LETS_ADD_OVERLAYS": "Let's add some overlays from the watch!",
+		"LETS_ADD_OVERLAYS": "Let's add some overlays from the taskbar!",
 		"MAXIMUM_SETS_REACHED": "Maximum number of sets reached.",
 		"NO_SET_SELECTED": "No set is selected.",
 		"ONE_CONTROLLER_ON_FLOOR": "Place one controller on the floor!"
@@ -112,5 +137,17 @@
 		"RECENTER": "Recenter playspace",
 		"SWITCH_TO_SET": "Switch to set",
 		"TOGGLE_FOR_CURRENT_SET": "Toggle for current set"
+	},
+	"WHISPER": {
+		"TRANSCRIBE": "Press and hold to transcribe text",
+		"PASTE": "Copy transcription to clipboard",
+		"PASTE_AND_GO": "Copy transcription and send Ctrl-V to focused app",
+		"SEND_OSC": "Send transcription to OSC chatbox",
+		"UNLOAD_AND_CLOSE": "Unload model and close",
+		"MODEL_NOT_DOWNLOADED": "Speech-to-text not set up!",
+		"DOWNLOAD_GUIDANCE": "Set up speech-to-text under settings, features!",
+		"INITIAL_TEXT": "Press and hold the mic button to start transcribing...",
+		"INIT_ERROR": "Error while starting Whisper engine",
+		"ENTER_KEY": "Enter key"
 	}
 }

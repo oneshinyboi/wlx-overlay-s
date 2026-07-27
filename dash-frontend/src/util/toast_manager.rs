@@ -1,10 +1,9 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
-
 use glam::{Mat4, Vec3};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use wgui::{
 	animation::{Animation, AnimationEasing},
+	color::{WguiColor, WguiColorName},
 	components::tooltip::{TOOLTIP_BORDER_COLOR, TOOLTIP_COLOR},
-	drawing::Color,
 	i18n::Translation,
 	layout::{Layout, LayoutTask, LayoutTasks, WidgetID},
 	renderer_vk::{
@@ -69,8 +68,8 @@ impl ToastManager {
 					width: percent(1.0),
 					height: percent(0.8),
 				},
-				align_items: Some(taffy::AlignItems::End),
-				justify_content: Some(taffy::JustifyContent::Center),
+				align_items: Some(taffy::AlignItems::END),
+				justify_content: Some(taffy::JustifyContent::CENTER),
 				..Default::default()
 			},
 		)?;
@@ -78,8 +77,8 @@ impl ToastManager {
 		let (rect, _) = layout.add_child(
 			root.id,
 			WidgetRectangle::create(WidgetRectangleParams {
-				color: TOOLTIP_COLOR,
-				border_color: TOOLTIP_BORDER_COLOR,
+				color: TOOLTIP_COLOR.into(),
+				border_color: TOOLTIP_BORDER_COLOR.into(),
 				border: 2.0,
 				round: WLength::Percent(1.0),
 				..Default::default()
@@ -111,6 +110,7 @@ impl ToastManager {
 					wrap: true,
 					..Default::default()
 				},
+				..Default::default()
 			},
 		);
 		let (label, _) = layout.add_child(rect.id, label, taffy::Style { ..Default::default() })?;
@@ -132,11 +132,15 @@ impl ToastManager {
 				}
 
 				let rect = data.obj.get_as_mut::<WidgetRectangle>().unwrap();
-				rect.params.color.a = opacity;
-				rect.params.border_color.a = opacity;
+				rect.params.color = rect.params.color.with_alpha(opacity);
+				rect.params.border_color = rect.params.border_color.with_alpha(opacity);
 
 				let mut label = common.state.widgets.get_as::<WidgetLabel>(label.id).unwrap();
-				label.set_color(common, Color::new(1.0, 1.0, 1.0, opacity), true);
+				label.set_color(
+					common,
+					WguiColor::from(WguiColorName::OnBackgroundVariant).with_alpha(opacity),
+					true,
+				);
 				common.alterables.mark_redraw();
 			}),
 		));

@@ -16,10 +16,10 @@ use wlx_common::{
 
 use crate::{
     FRAME_COUNTER,
-    backend::task::{OverlayTask, ToggleMode},
+    backend::task::{CreateOverlayTask, GlobalChange, OverlayTask, SpawnPos, ToggleMode},
     config::save_state,
     overlays::{
-        anchor::{create_anchor, create_grab_help},
+        anchor::{create_alltab_help, create_anchor, create_grab_help},
         custom::create_custom,
         dashboard::{DASH_NAME, create_dash_frontend},
         edit::EditWrapperManager,
@@ -34,7 +34,10 @@ use crate::{
         backend::{OverlayEventData, OverlayMeta},
         set::OverlayWindowSet,
         snap_upright,
-        window::{OverlayCategory, OverlayWindowData},
+        window::{
+            OverlayCategory, OverlayWindowData, save_transform, scalar_scale,
+            spawn_transform_from_parent,
+        },
     },
 };
 
@@ -136,6 +139,16 @@ where
         let grab_help = OverlayWindowData::from_config(create_grab_help(app)?);
         me.add(grab_help, app);
 
+        let alttab_help = OverlayWindowData::from_config(create_alltab_help(app)?);
+        me.add(alttab_help, app);
+
+        #[cfg(feature = "whisper")]
+        {
+            use crate::overlays::whisper::create_whisper;
+            let whisper = OverlayWindowData::from_config(create_whisper(app, headless, wayland)?);
+            me.add(whisper, app);
+        }
+
         let custom_panels = app.session.config.custom_panels.clone();
         for name in custom_panels {
             let Some(panel) = create_custom(app, name) else {
@@ -183,6 +196,18 @@ where
                     }
                 }
             }
+            OverlayTask::ResizeOverlay(sel, size) => {
+                let Some(id) = self.id_by_selector(&sel) else {
+                    log::warn!("Overlay not found for task: {sel:?}");
+                    return Ok(());
+                };
+
+                let o = &mut self.overlays[id];
+
+                o.config
+                    .backend
+                    .notify(app, OverlayEventData::ResizeRequest(size))?;
+            }
             OverlayTask::ToggleOverlay(sel, mode) => {
                 let Some(id) = self.id_by_selector(&sel) else {
                     log::warn!("Overlay not found for task: {sel:?}");
@@ -220,8 +245,6 @@ where
                     o.config.activate(app);
                 }
                 self.visible_overlays_changed(app)?;
-
-                return Ok(());
             }
             OverlayTask::ToggleEditMode => {
                 self.set_edit_mode(!self.edit_mode, app)?;
@@ -287,7 +310,17 @@ where
                 self.restore_set = 0;
                 self.sets_changed(app);
             }
-            OverlayTask::SettingsChanged => {
+            OverlayTask::GlobalChange(GlobalChange::Settings) => {
+                if let Some(watch) = self.mut_by_id(self.watch_id)
+                    && app.session.config.enable_watch != watch.config.active_state.is_some()
+                {
+                    if watch.config.active_state.is_some() {
+                        watch.config.deactivate();
+                    } else {
+                        watch.config.activate(app);
+                    }
+                }
+
                 for o in self.overlays.values_mut() {
                     let _ = o
                         .config
@@ -296,9 +329,23 @@ where
                         .log_err("Could not notify SettingsChanged");
                 }
             }
-            OverlayTask::KeyboardChanged => {
+            OverlayTask::GlobalChange(GlobalChange::Keyboard) => {
                 self.overlays_changed(app)?;
                 self.sets_changed(app);
+            }
+            OverlayTask::GlobalChange(GlobalChange::ColorPalette) => {
+                {
+                    let mut globals = app.wgui_globals.get();
+                    globals.palette =
+                        wlx_common::palette::load_palette(&app.session.config.color_palette);
+                }
+
+                for o in self.overlays.values_mut() {
+                    let _ = o
+                        .config
+                        .backend
+                        .notify(app, OverlayEventData::ColorPaletteRefresh);
+                }
             }
             OverlayTask::CleanupMirrors => {
                 let mut ids_to_remove = vec![];
@@ -328,24 +375,8 @@ where
                     log::warn!("Overlay not found for task: {sel:?}");
                 }
             }
-            OverlayTask::Create(sel, f) => {
-                let None = self.mut_by_selector(&sel) else {
-                    log::debug!("Could not create {sel:?}: exists");
-                    return Ok(());
-                };
-
-                let Some(overlay_config) = f(app) else {
-                    log::debug!("Could not create {sel:?}: empty config");
-                    return Ok(());
-                };
-
-                self.add(
-                    OverlayWindowData {
-                        birthframe: FRAME_COUNTER.load(Ordering::Relaxed),
-                        ..OverlayWindowData::from_config(overlay_config)
-                    },
-                    app,
-                );
+            OverlayTask::Spawn(sel, spawn_pos, f) => {
+                self.spawn_overlay(app, sel, spawn_pos, f)?;
             }
             OverlayTask::Drop(sel) => {
                 if let Some(o) = self.mut_by_selector(&sel)
@@ -383,6 +414,35 @@ where
                 }
             }
         }
+        Ok(())
+    }
+
+    fn spawn_overlay(
+        &mut self,
+        app: &mut AppState,
+        sel: OverlaySelector,
+        spawn_pos: SpawnPos,
+        f: Box<CreateOverlayTask>,
+    ) -> anyhow::Result<()> {
+        let None = self.mut_by_selector(&sel) else {
+            log::debug!("Could not spawn {sel:?}: exists");
+            return Ok(());
+        };
+
+        let Some(overlay_config) = f(app) else {
+            log::debug!("Could not spawn {sel:?}: empty config");
+            return Ok(());
+        };
+
+        self.add_with_spawn_pos(
+            OverlayWindowData {
+                birthframe: FRAME_COUNTER.load(Ordering::Relaxed),
+                ..OverlayWindowData::from_config(overlay_config)
+            },
+            app,
+            spawn_pos,
+        );
+
         Ok(())
     }
 }
@@ -439,18 +499,28 @@ impl<T> OverlayWindowManager<T> {
             app.session.config.sets.push(serialized);
         }
 
-        // global overlays; watch, toast
-        for oid in &[self.watch_id] {
-            let Some(o) = self.get_by_id(*oid) else {
-                break;
-            };
-            let Some(state) = o.config.active_state.clone() else {
-                break;
-            };
+        // global overlays
+        for o in self.overlays.values() {
+            if o.config.global {
+                if let Some(state) = &o.config.active_state {
+                    app.session
+                        .config
+                        .global_set
+                        .insert(o.config.name.clone(), state.clone());
+                }
+            }
+        }
+        for (name, state) in &self.global_set.hidden_overlays {
             app.session
                 .config
                 .global_set
-                .insert(o.config.name.clone(), state.clone());
+                .insert(name.clone(), state.clone());
+        }
+        for (name, state) in &self.global_set.inactive_overlays {
+            app.session
+                .config
+                .global_set
+                .insert(name.clone(), state.clone());
         }
 
         // BackendAttrib
@@ -575,6 +645,19 @@ impl<T> OverlayWindowManager<T> {
     pub fn set_edit_mode(&mut self, enabled: bool, app: &mut AppState) -> anyhow::Result<()> {
         let changed = enabled != self.edit_mode;
         self.edit_mode = enabled;
+
+        if changed && let Some(watch) = self.mut_by_id(self.watch_id) {
+            watch
+                .config
+                .active_state
+                .iter_mut()
+                .for_each(|f| f.grabbable = enabled);
+            watch
+                .config
+                .backend
+                .notify(app, OverlayEventData::EditModeChanged(enabled))?;
+        }
+
         if !enabled {
             for o in self.overlays.values_mut() {
                 self.wrappers.unwrap_edit_mode(&mut o.config, app)?;
@@ -586,17 +669,6 @@ impl<T> OverlayWindowManager<T> {
                     log::error!("Could not save state: {e:?}");
                 }
             }
-        }
-        if changed && let Some(watch) = self.mut_by_id(self.watch_id) {
-            watch
-                .config
-                .active_state
-                .iter_mut()
-                .for_each(|f| f.grabbable = enabled);
-            watch
-                .config
-                .backend
-                .notify(app, OverlayEventData::EditModeChanged(enabled))?;
         }
         Ok(())
     }
@@ -705,7 +777,16 @@ impl<T> OverlayWindowManager<T> {
             .map(|(k, _)| k)
     }
 
-    pub fn add(&mut self, mut overlay: OverlayWindowData<T>, app: &mut AppState) -> OverlayID {
+    pub fn add(&mut self, overlay: OverlayWindowData<T>, app: &mut AppState) -> OverlayID {
+        self.add_with_spawn_pos(overlay, app, SpawnPos::Fixed)
+    }
+
+    fn add_with_spawn_pos(
+        &mut self,
+        mut overlay: OverlayWindowData<T>,
+        app: &mut AppState,
+        spawn_pos: SpawnPos,
+    ) -> OverlayID {
         while self.lookup(&overlay.config.name).is_some() {
             log::error!(
                 "An overlay with name {} already exists. Deduplicating, but things may break!",
@@ -749,6 +830,7 @@ impl<T> OverlayWindowManager<T> {
         if !shown && show_on_spawn {
             log::debug!("activating {name} due to show_on_spawn");
             self.overlays[oid].config.activate(app);
+            self.apply_spawn_pos(app, oid, spawn_pos);
         }
         if !internal && let Err(e) = self.overlays_changed(app) {
             log::error!("Error while adding overlay: {e:?}");
@@ -757,6 +839,72 @@ impl<T> OverlayWindowManager<T> {
             log::error!("Error while adding overlay: {e:?}");
         }
         oid
+    }
+
+    fn apply_spawn_pos(&mut self, app: &mut AppState, oid: OverlayID, spawn_pos: SpawnPos) {
+        match spawn_pos {
+            SpawnPos::Fixed => {}
+            SpawnPos::Spread => {
+                let Some(parent_id) = self.spread_parent_for(oid) else {
+                    return;
+                };
+                let parent = OverlaySelector::Id(parent_id);
+                let _ = self.offset_spawn_from_parent(app, oid, &parent);
+            }
+            SpawnPos::Parent(parent) => {
+                let _ = self.offset_spawn_from_parent(app, oid, &parent);
+            }
+        }
+    }
+
+    // TODO: this just uses the last spawned overlay as parent, can probably do better?
+    fn spread_parent_for(&self, oid: OverlayID) -> Option<OverlayID> {
+        self.overlays
+            .iter()
+            .filter(|(id, overlay)| {
+                *id != oid
+                    && overlay.config.active_state.is_some()
+                    && matches!(
+                        overlay.config.category,
+                        OverlayCategory::Panel | OverlayCategory::WayVR | OverlayCategory::Screen
+                    )
+            })
+            .max_by_key(|(_, overlay)| overlay.birthframe)
+            .map(|(id, _)| id)
+    }
+
+    fn offset_spawn_from_parent(
+        &mut self,
+        app: &mut AppState,
+        oid: OverlayID,
+        parent: &OverlaySelector,
+    ) -> Option<()> {
+        let parent_id = self.id_by_selector(parent)?;
+
+        if parent_id == oid {
+            return None;
+        }
+
+        let parent_transform = self
+            .overlays
+            .get(parent_id)?
+            .config
+            .active_state
+            .as_ref()?
+            .transform;
+
+        let overlay = self.overlays.get_mut(oid)?;
+        let state = overlay.config.active_state.as_mut()?;
+
+        let child_scale = scalar_scale(&overlay.config.default_state.transform);
+        let spawn_transform =
+            spawn_transform_from_parent(&parent_transform, &app.input_state.hmd, child_scale);
+
+        state.transform = spawn_transform;
+        save_transform(state, app);
+        overlay.config.dirty = true;
+
+        Some(())
     }
 
     pub fn switch_or_toggle_set(&mut self, app: &mut AppState, set: usize) {

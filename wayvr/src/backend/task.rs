@@ -56,13 +56,15 @@ pub enum OpenVrTask {
 
 #[cfg(feature = "openxr")]
 pub enum OpenXrTask {
-    SettingsChanged,
+    EnvironmentChanged,
 }
 
 pub enum PlayspaceTask {
     Recenter,
     Reset,
     FixFloor,
+    SaveCenter,
+    ResetCenter,
 }
 
 #[derive(Debug, Clone)]
@@ -85,10 +87,27 @@ pub struct ModifyPanelTask {
     pub command: ModifyPanelCommand,
 }
 
+#[derive(Clone, Copy)]
 pub enum ToggleMode {
     EnsureOn,
     EnsureOff,
     Toggle,
+}
+
+#[derive(Clone)]
+pub enum SpawnPos {
+    /// Always spawn at the designated pos
+    Fixed,
+    /// Automatically spread out for user experience
+    Spread,
+    /// Spawn relative to a different overlay
+    Parent(OverlaySelector),
+}
+
+pub enum GlobalChange {
+    Settings,
+    Keyboard,
+    ColorPalette,
 }
 
 pub type ModifyOverlayTask = dyn FnOnce(&mut AppState, &mut OverlayWindowConfig) + Send;
@@ -99,21 +118,24 @@ pub enum OverlayTask {
     SwitchSet(Option<usize>),
     ToggleOverlay(OverlaySelector, ToggleMode),
     ResetOverlay(OverlaySelector),
+    ResizeOverlay(OverlaySelector, [u32; 2]),
     DeleteActiveSet,
     ToggleEditMode,
     ToggleDashboard,
     ShowHide,
     CleanupMirrors,
-    SettingsChanged,
-    KeyboardChanged,
+    GlobalChange(GlobalChange),
     Modify(OverlaySelector, Box<ModifyOverlayTask>),
-    Create(OverlaySelector, Box<CreateOverlayTask>),
+    Spawn(OverlaySelector, SpawnPos, Box<CreateOverlayTask>),
     ModifyPanel(ModifyPanelTask),
     Drop(OverlaySelector),
 }
 
+pub type GlobalTask = dyn FnOnce(&mut AppState) + Send;
+
 #[allow(dead_code)]
 pub enum TaskType {
+    Global(Box<GlobalTask>),
     Input(InputTask),
     Overlay(OverlayTask),
     Playspace(PlayspaceTask),

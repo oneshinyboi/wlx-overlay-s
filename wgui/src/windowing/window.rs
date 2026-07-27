@@ -9,7 +9,6 @@ use crate::{
 	components::button::ComponentButton,
 	drawing,
 	event::{EventListenerKind, StyleSetRequest},
-	globals::WguiGlobals,
 	i18n::Translation,
 	layout::{Layout, LayoutTask, LayoutTasks, WidgetPair},
 	parser::{self, Fetchable, ParserState},
@@ -81,7 +80,6 @@ impl Default for WguiWindowParamsExtra {
 
 pub struct WguiWindowParams<'a> {
 	pub position: Vec2,
-	pub globals: &'a WguiGlobals,
 	pub layout: &'a mut Layout,
 	pub extra: WguiWindowParamsExtra,
 }
@@ -100,7 +98,7 @@ impl WguiWindow {
 		self.0.borrow_mut().opened_window = None;
 	}
 
-	pub fn open(&mut self, params: &mut WguiWindowParams) -> anyhow::Result<()> {
+	pub fn open(&self, params: &mut WguiWindowParams) -> anyhow::Result<()> {
 		// close previous one if it's already open
 		self.close();
 
@@ -124,8 +122,8 @@ impl WguiWindow {
 					bottom: length(0.0),
 					right: length(0.0),
 				},
-				taffy::JustifyContent::Start, // x start
-				taffy::AlignItems::Start,     // y start
+				taffy::JustifyContent::START, // x start
+				taffy::AlignItems::START,     // y start
 			),
 			WguiWindowPlacement::BottomLeft => (
 				taffy::Rect {
@@ -134,8 +132,8 @@ impl WguiWindow {
 					bottom: length(params.position.y - window_padding),
 					right: length(0.0),
 				},
-				taffy::JustifyContent::Start, // x start
-				taffy::AlignItems::End,       // y end
+				taffy::JustifyContent::START, // x start
+				taffy::AlignItems::END,       // y end
 			),
 			WguiWindowPlacement::TopRight => (
 				taffy::Rect {
@@ -144,8 +142,8 @@ impl WguiWindow {
 					bottom: length(0.0),
 					right: length(params.position.x - window_padding),
 				},
-				taffy::JustifyContent::End, // x end
-				taffy::AlignItems::Start,   // y start
+				taffy::JustifyContent::END, // x end
+				taffy::AlignItems::START,   // y start
 			),
 			WguiWindowPlacement::BottomRight => (
 				taffy::Rect {
@@ -154,8 +152,8 @@ impl WguiWindow {
 					bottom: length(params.position.y - window_padding),
 					right: length(params.position.x - window_padding),
 				},
-				taffy::JustifyContent::End, // x end
-				taffy::AlignItems::End,     // y end
+				taffy::JustifyContent::END, // x end
+				taffy::AlignItems::END,     // y end
 			),
 		};
 
@@ -191,7 +189,7 @@ impl WguiWindow {
 				AnimationEasing::OutQuad,
 				Box::new(|common, data| {
 					let rect = data.obj.get_as_mut::<WidgetRectangle>().unwrap() /* should always succeed */;
-					rect.params.color = drawing::Color::new(0.0, 0.0, 0.0, data.pos * 0.3);
+					rect.params.color = drawing::Color::new(0.0, 0.0, 0.0, data.pos * 0.3).into();
 					common.alterables.mark_redraw();
 				}),
 			));
@@ -216,12 +214,14 @@ impl WguiWindow {
 			},
 		)?;
 
+		let globals = params.layout.state.globals.clone();
+
 		let content_id = if params.extra.with_decorations {
 			let xml_path: AssetPath = AssetPath::WguiInternal("wgui/window_frame.xml");
 
 			let state = parser::parse_from_assets(
 				&parser::ParseDocumentParams {
-					globals: params.globals.clone(),
+					globals: globals.clone(),
 					path: xml_path,
 					extra: Default::default(),
 				},
@@ -240,7 +240,7 @@ impl WguiWindow {
 
 			if let Some(title) = &params.extra.title {
 				let mut text_title = state.fetch_widget_as::<WidgetLabel>(&params.layout.state, "text_window_title")?;
-				text_title.set_text_simple(&mut params.globals.get(), title.clone());
+				text_title.set_text_simple(&mut globals.get(), title.clone());
 			}
 			let content = state.fetch_widget(&params.layout.state, "content")?;
 
@@ -270,20 +270,19 @@ impl WguiWindow {
 			content.id
 		};
 
-		let mut c = params.layout.start_common();
 		if let Some(width) = params.extra.fixed_width {
-			c.common()
+			params
+				.layout
 				.alterables
 				.set_style(content_id, StyleSetRequest::Width(length(width)));
 		}
 
 		if let Some(height) = params.extra.fixed_height {
-			c.common()
+			params
+				.layout
 				.alterables
 				.set_style(content_id, StyleSetRequest::Height(length(height)));
 		}
-
-		c.finish()?;
 
 		Ok(())
 	}

@@ -37,10 +37,19 @@ pub struct MonadoDumpSessionFrame {
 }
 
 #[derive(Clone, Copy)]
-pub enum RecenterMode {
+pub enum DashPlayspaceTask {
 	FixFloor,
 	Recenter,
 	Reset,
+	SaveCenter,
+	ResetCenter,
+}
+
+#[derive(Clone, Copy)]
+pub struct InterfaceFeats {
+	pub openxr: bool,
+	pub monado: bool,
+	pub whisper: bool,
 }
 
 pub trait DashInterface<T> {
@@ -62,12 +71,24 @@ pub trait DashInterface<T> {
 	fn monado_brightness_set(&mut self, data: &mut T, brightness: f32) -> Option<()>;
 	fn monado_metrics_set_enabled(&mut self, data: &mut T, enabled: bool) -> bool;
 	fn monado_metrics_dump_session_frames(&mut self, data: &mut T) -> Vec<MonadoDumpSessionFrame>;
-	fn recenter_playspace(&mut self, data: &mut T, mode: RecenterMode) -> anyhow::Result<()>;
+	fn playspace_task(&mut self, data: &mut T, mode: DashPlayspaceTask) -> anyhow::Result<()>;
 	fn desktop_finder<'a>(&'a mut self, data: &'a mut T) -> &'a mut DesktopFinder;
 	fn general_config<'a>(&'a mut self, data: &'a mut T) -> &'a mut GeneralConfig;
-	fn config_changed(&mut self, data: &mut T);
+	fn config_changed(&mut self, data: &mut T, kind: ConfigChangeKind);
 	fn restart(&mut self, data: &mut T);
 	fn toggle_dashboard(&mut self, data: &mut T);
+	fn get_feats(&mut self, data: &mut T) -> InterfaceFeats;
+}
+
+#[derive(Default, Clone, Copy)]
+pub enum ConfigChangeKind {
+	OverlayConfig,
+	EnvironmentBlend,
+	WguiColorPaletteChange,
+	WvrServerConfig,
+	/// Marks the config for saving but doesn't notify any components
+	#[default]
+	Other,
 }
 
 pub type BoxDashInterface<T> = Box<dyn DashInterface<T>>;

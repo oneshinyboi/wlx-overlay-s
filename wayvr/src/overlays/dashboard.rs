@@ -1,22 +1,26 @@
-use std::sync::atomic::Ordering;
+use std::{
+    ops::Add,
+    sync::{Arc, atomic::Ordering},
+    time::{Duration, Instant},
+};
 
 use dash_frontend::frontend::{self, FrontendTask, FrontendUpdateParams};
-use glam::{Affine2, Affine3A, Vec2, vec2, vec3};
+use glam::{Affine2, Affine3A, Quat, Vec2, vec2, vec3};
 use wayvr_ipc::{
     packet_client::WvrProcessLaunchParams,
     packet_server::{WvrProcess, WvrProcessHandle, WvrWindow, WvrWindowHandle},
 };
 use wgui::{
     event::{
-        Event as WguiEvent, MouseButtonEvent, MouseButtonIndex, MouseLeaveEvent, MouseMotionEvent,
-        MouseWheelEvent,
+        DeviceBitmask, Event as WguiEvent, MouseButtonEvent, MouseButtonIndex, MouseLeaveEvent,
+        MouseMotionEvent, MouseWheelEvent,
     },
     gfx::cmd::WGfxClearMode,
     renderer_vk::context::Context as WguiContext,
     widget::EventResult,
 };
 use wlx_common::{
-    dash_interface::{self, DashInterface, RecenterMode},
+    dash_interface::{self, ConfigChangeKind, DashInterface, DashPlayspaceTask},
     locale::WayVRLangProvider,
     overlays::{BackendAttrib, BackendAttribValue},
 };
@@ -33,7 +37,7 @@ use crate::{
     backend::{
         XrBackend,
         input::{Haptics, HoverResult, PointerHit, PointerMode},
-        task::{OverlayTask, PlayspaceTask, TaskType, ToggleMode},
+        task::{GlobalChange, OverlayTask, PlayspaceTask, TaskType, ToggleMode},
         wayvr::{
             process::{KillSignal, ProcessHandle},
             window::WindowHandle,
@@ -49,7 +53,7 @@ use crate::{
             FrameMeta, OverlayBackend, OverlayEventData, RenderResources, ShouldRender,
             ui_transform,
         },
-        window::{OverlayCategory, OverlayWindowConfig},
+        window::{OverlayCategory, OverlayWindowConfig, realign},
     },
 };
 
@@ -65,6 +69,7 @@ pub struct DashFrontend {
     timestep: Timestep,
     has_focus: [bool; 2],
     context: WguiContext,
+    tutorial: bool,
 }
 
 const GUI_SCALE: f32 = 2.0;
@@ -73,15 +78,23 @@ impl DashFrontend {
     fn new(app: &mut AppState) -> anyhow::Result<Self> {
         let mut interface = DashInterfaceLive::new();
 
-        for p in app.session.config.autostart_apps.clone() {
-            let _ = interface.process_launch(app, false, p);
+        if app.session.no_autostart {
+            log::info!("Not starting apps due to --no-autostart");
+        } else {
+            for p in app.session.config.autostart_apps.clone() {
+                let _ = interface.process_launch(app, false, p);
+            }
         }
+
+        let tutorial = !app.session.config.tutorial_graduated;
 
         let frontend = frontend::Frontend::new(frontend::InitParams {
             interface: Box::new(interface),
             lang_provider: &WayVRLangProvider::from_config(&app.session.config),
+            show_welcome: tutorial,
             has_monado: matches!(app.xr_backend, XrBackend::OpenXR),
             theme: app.wgui_theme.clone(),
+            color_palette: &*app.session.config.color_palette,
         })?;
 
         frontend
@@ -96,6 +109,7 @@ impl DashFrontend {
             timestep: Timestep::new(60.0),
             has_focus: [false, false],
             context,
+            tutorial,
         })
     }
 
@@ -193,7 +207,26 @@ impl OverlayBackend for DashFrontend {
         })
     }
 
-    fn notify(&mut self, _app: &mut AppState, _data: OverlayEventData) -> anyhow::Result<()> {
+    fn notify(&mut self, app: &mut AppState, data: OverlayEventData) -> anyhow::Result<()> {
+        if !self.tutorial {
+            return Ok(());
+        }
+
+        // if we're grabbed, stop following the hmd
+        if let OverlayEventData::OverlayGrabbed { name, .. } = data {
+            if &*name == DASH_NAME {
+                self.tutorial = false;
+                app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+                    OverlaySelector::Name(name),
+                    Box::new(|_app, owc| {
+                        if let Some(active_state) = owc.active_state.as_mut() {
+                            active_state.positioning = Positioning::Floating;
+                        }
+                    }),
+                )));
+            }
+        }
+
         Ok(())
     }
 
@@ -201,7 +234,7 @@ impl OverlayBackend for DashFrontend {
         let e = WguiEvent::MouseWheel(MouseWheelEvent {
             delta: vec2(delta.x, delta.y) / 8.0,
             pos: hit.uv * self.inner.layout.content_size,
-            device: hit.pointer,
+            device: DeviceBitmask::from_index(hit.pointer),
         });
         self.push_event(&e);
     }
@@ -209,7 +242,7 @@ impl OverlayBackend for DashFrontend {
     fn on_hover(&mut self, _app: &mut AppState, hit: &PointerHit) -> HoverResult {
         let e = &WguiEvent::MouseMotion(MouseMotionEvent {
             pos: hit.uv * self.inner.layout.content_size,
-            device: hit.pointer,
+            device: DeviceBitmask::from_index(hit.pointer),
         });
 
         self.has_focus[hit.pointer] = true;
@@ -231,7 +264,9 @@ impl OverlayBackend for DashFrontend {
     }
 
     fn on_left(&mut self, _app: &mut AppState, pointer: usize) {
-        let e = WguiEvent::MouseLeave(MouseLeaveEvent { device: pointer });
+        let e = WguiEvent::MouseLeave(MouseLeaveEvent {
+            device: DeviceBitmask::from_index(pointer),
+        });
         self.has_focus[pointer] = false;
         self.push_event(&e);
     }
@@ -248,13 +283,13 @@ impl OverlayBackend for DashFrontend {
             WguiEvent::MouseDown(MouseButtonEvent {
                 pos: hit.uv * self.inner.layout.content_size,
                 index,
-                device: hit.pointer,
+                device: DeviceBitmask::from_index(hit.pointer),
             })
         } else {
             WguiEvent::MouseUp(MouseButtonEvent {
                 pos: hit.uv * self.inner.layout.content_size,
                 index,
-                device: hit.pointer,
+                device: DeviceBitmask::from_index(hit.pointer),
             })
         };
         self.push_event(&e);
@@ -263,11 +298,11 @@ impl OverlayBackend for DashFrontend {
         if !pressed && !self.has_focus[hit.pointer] {
             let e = WguiEvent::MouseMotion(MouseMotionEvent {
                 pos: vec2(-1., -1.),
-                device: hit.pointer,
+                device: DeviceBitmask::from_index(hit.pointer),
             });
             self.push_event(&e);
             let e = WguiEvent::MouseLeave(MouseLeaveEvent {
-                device: hit.pointer,
+                device: DeviceBitmask::from_index(hit.pointer),
             });
             self.push_event(&e);
         }
@@ -284,7 +319,56 @@ impl OverlayBackend for DashFrontend {
     }
 }
 
+fn tutorial_spawn_effect(app: &mut AppState) -> anyhow::Result<()> {
+    let dash_name: Arc<str> = DASH_NAME.into();
+
+    app.tasks.enqueue_at(
+        TaskType::Overlay(OverlayTask::Modify(
+            OverlaySelector::Name(dash_name.clone()),
+            Box::new(|app, owc| {
+                let hmd = &app.input_state.hmd;
+                let pos = hmd.translation + hmd.z_axis * -2.0;
+                let mut transform = Affine3A::from_rotation_translation(Quat::IDENTITY, pos.into());
+                realign(&mut transform, hmd, 1.0, app.session.config.snap_angle_deg);
+
+                owc.active_state = Some(OverlayWindowState {
+                    saved_transform: Some(Affine3A::from_translation(vec3(0., -0.1, -0.9))),
+                    transform,
+                    grabbable: true,
+                    interactable: true,
+                    positioning: Positioning::FollowHead { lerp: 0.01 },
+                    curvature: Some(0.15),
+                    alpha: 0.1,
+                    ..Default::default()
+                });
+            }),
+        )),
+        Instant::now().add(Duration::from_millis(500)),
+    );
+
+    // hacky fade in over time
+    for i in 0..46 {
+        app.tasks.enqueue_at(
+            TaskType::Overlay(OverlayTask::Modify(
+                OverlaySelector::Name(dash_name.clone()),
+                Box::new(|_app, owc| {
+                    if let Some(active_state) = owc.active_state.as_mut() {
+                        active_state.alpha = (active_state.alpha + 0.025).min(1.0);
+                    }
+                }),
+            )),
+            Instant::now().add(Duration::from_millis(500 + 40 * i)),
+        );
+    }
+
+    Ok(())
+}
+
 pub fn create_dash_frontend(app: &mut AppState) -> anyhow::Result<OverlayWindowConfig> {
+    if !app.session.config.tutorial_graduated {
+        tutorial_spawn_effect(app)?;
+    }
+
     Ok(OverlayWindowConfig {
         name: DASH_NAME.into(),
         default_state: OverlayWindowState {
@@ -343,7 +427,7 @@ impl DashInterface<AppState> for DashInterfaceLive {
         let handle = ProcessHandle::from_packet(handle);
         wvr_server
             .processes
-            .get(&handle)
+            .get(handle)
             .map(|x| x.to_packet(handle))
     }
 
@@ -420,11 +504,17 @@ impl DashInterface<AppState> for DashInterfaceLive {
         Ok(())
     }
 
-    fn recenter_playspace(&mut self, app: &mut AppState, mode: RecenterMode) -> anyhow::Result<()> {
+    fn playspace_task(
+        &mut self,
+        app: &mut AppState,
+        mode: DashPlayspaceTask,
+    ) -> anyhow::Result<()> {
         let task = match mode {
-            RecenterMode::FixFloor => PlayspaceTask::FixFloor,
-            RecenterMode::Recenter => PlayspaceTask::Recenter,
-            RecenterMode::Reset => PlayspaceTask::Reset,
+            DashPlayspaceTask::FixFloor => PlayspaceTask::FixFloor,
+            DashPlayspaceTask::Recenter => PlayspaceTask::Recenter,
+            DashPlayspaceTask::Reset => PlayspaceTask::Reset,
+            DashPlayspaceTask::SaveCenter => PlayspaceTask::SaveCenter,
+            DashPlayspaceTask::ResetCenter => PlayspaceTask::ResetCenter,
         };
         app.tasks.enqueue(TaskType::Playspace(task));
         Ok(())
@@ -444,16 +534,37 @@ impl DashInterface<AppState> for DashInterfaceLive {
         &mut data.session.config
     }
 
-    fn config_changed(&mut self, data: &mut AppState) {
+    fn config_changed(&mut self, data: &mut AppState, kind: ConfigChangeKind) {
         data.session.config_dirty = true;
-        #[cfg(feature = "openxr")]
-        {
-            use crate::backend::task::OpenXrTask;
-            data.tasks
-                .enqueue(TaskType::OpenXR(OpenXrTask::SettingsChanged));
+
+        match kind {
+            ConfigChangeKind::WguiColorPaletteChange => {
+                data.tasks
+                    .enqueue(TaskType::Overlay(OverlayTask::GlobalChange(
+                        GlobalChange::ColorPalette,
+                    )));
+            }
+            ConfigChangeKind::OverlayConfig => {
+                data.tasks
+                    .enqueue(TaskType::Overlay(OverlayTask::GlobalChange(
+                        GlobalChange::Settings,
+                    )));
+            }
+            ConfigChangeKind::EnvironmentBlend => {
+                #[cfg(feature = "openxr")]
+                {
+                    use crate::backend::task::OpenXrTask;
+                    data.tasks
+                        .enqueue(TaskType::OpenXR(OpenXrTask::EnvironmentChanged));
+                }
+            }
+            ConfigChangeKind::WvrServerConfig => {
+                if let Some(wvr_server) = data.wvr_server.as_mut() {
+                    wvr_server.config_changed(&data.session.config);
+                }
+            }
+            _ => {}
         }
-        data.tasks
-            .enqueue(TaskType::Overlay(OverlayTask::SettingsChanged));
     }
 
     fn restart(&mut self, _data: &mut AppState) {
@@ -464,6 +575,20 @@ impl DashInterface<AppState> for DashInterfaceLive {
     fn toggle_dashboard(&mut self, data: &mut AppState) {
         data.tasks
             .enqueue(TaskType::Overlay(OverlayTask::ToggleDashboard));
+    }
+
+    fn get_feats(&mut self, data: &mut AppState) -> dash_interface::InterfaceFeats {
+        dash_interface::InterfaceFeats {
+            openxr: matches!(data.xr_backend, XrBackend::OpenXR),
+            #[cfg(feature = "openxr")]
+            monado: data.monado_state.is_some(),
+            #[cfg(not(feature = "openxr"))]
+            monado: false,
+            #[cfg(feature = "whisper")]
+            whisper: true,
+            #[cfg(not(feature = "whisper"))]
+            whisper: false,
+        }
     }
 
     #[cfg(feature = "openxr")]

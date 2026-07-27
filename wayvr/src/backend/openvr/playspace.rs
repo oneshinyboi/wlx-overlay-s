@@ -4,10 +4,11 @@ use ovr_overlay::{
     compositor::CompositorManager,
     sys::{EChaperoneConfigFile, ETrackingUniverseOrigin, HmdMatrix34_t},
 };
+use wgui::log::LogErr;
 
 use crate::{
-    backend::{input::InputState, task::PlayspaceTask},
-    state::AppState,
+    backend::{playspace_common, task::PlayspaceTask},
+    state::{AppState, PlayspaceState, load_playspace_state, save_playspace_state},
     windowing::manager::OverlayWindowManager,
 };
 
@@ -23,32 +24,41 @@ pub(super) struct PlayspaceMover {
     universe: ETrackingUniverseOrigin,
     drag: Option<MoverData<Vec3A>>,
     rotate: Option<MoverData<Quat>>,
+    playspace_state: PlayspaceState,
 }
 
 impl PlayspaceMover {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             universe: ETrackingUniverseOrigin::TrackingUniverseRawAndUncalibrated,
             drag: None,
             rotate: None,
+            playspace_state: load_playspace_state().unwrap_or_default(),
         }
     }
 
     pub fn handle_task(
         &mut self,
-        app: &AppState,
+        app: &mut AppState,
         chaperone_mgr: &mut ChaperoneSetupManager,
+        overlays: &mut OverlayWindowManager<OpenVrOverlayData>,
         task: PlayspaceTask,
     ) {
         match task {
             PlayspaceTask::FixFloor => {
-                self.fix_floor(chaperone_mgr, &app.input_state);
+                self.fix_floor(chaperone_mgr, app, overlays);
             }
             PlayspaceTask::Reset => {
-                self.reset_offset(chaperone_mgr, &app.input_state);
+                self.reset_offset(chaperone_mgr, overlays, &mut app.anchor);
             }
             PlayspaceTask::Recenter => {
-                self.recenter(chaperone_mgr, &app.input_state);
+                self.recenter(chaperone_mgr, app, overlays);
+            }
+            PlayspaceTask::SaveCenter => {
+                self.save_center(chaperone_mgr);
+            }
+            PlayspaceTask::ResetCenter => {
+                self.playspace_state.openvr_space_center = Affine3A::IDENTITY;
             }
         }
     }
@@ -58,7 +68,7 @@ impl PlayspaceMover {
         &mut self,
         chaperone_mgr: &mut ChaperoneSetupManager,
         overlays: &mut OverlayWindowManager<OpenVrOverlayData>,
-        app: &AppState,
+        app: &mut AppState,
     ) {
         let universe = self.universe.clone();
 
@@ -137,18 +147,11 @@ impl PlayspaceMover {
             }
 
             let overlay_offset = data.pose.inverse().transform_vector3a(relative_pos) * -1.0;
-
-            overlays.values_mut().for_each(|overlay| {
-                let Some(state) = overlay.config.active_state.as_mut() else {
-                    return;
-                };
-                if state.positioning.moves_with_space() {
-                    state.transform.translation += overlay_offset;
-                    overlay.config.dirty = true;
-                }
-            });
-
+            let before_pose = data.pose;
             data.pose.translation += relative_pos;
+            if !app.session.config.space_drag_affects_world {
+                playspace_common::shift_world(overlays, &mut app.anchor, &before_pose, &data.pose);
+            }
             data.hand_pose = new_hand;
 
             if self.universe == ETrackingUniverseOrigin::TrackingUniverseStanding {
@@ -178,30 +181,33 @@ impl PlayspaceMover {
 
         for pointer in &app.input_state.pointers {
             if pointer.now.space_reset && !pointer.before.space_reset {
-                self.reset_offset(chaperone_mgr, &app.input_state);
+                self.reset_offset(chaperone_mgr, overlays, &mut app.anchor);
                 log::info!("Space reset");
                 return;
             }
         }
     }
 
-    pub fn reset_offset(&mut self, chaperone_mgr: &mut ChaperoneSetupManager, input: &InputState) {
-        let mut height = 1.6;
-        if let Some(mat) = get_working_copy(&self.universe, chaperone_mgr) {
-            height = input.hmd.translation.y - mat.translation.y;
-            if self.universe == ETrackingUniverseOrigin::TrackingUniverseStanding {
-                apply_chaperone_transform(mat, chaperone_mgr);
-            }
-        }
-
-        let xform = if self.universe == ETrackingUniverseOrigin::TrackingUniverseSeated {
-            Affine3A::from_translation(Vec3::NEG_Y * height)
-        } else {
-            Affine3A::IDENTITY
+    pub fn reset_offset(
+        &mut self,
+        chaperone_mgr: &mut ChaperoneSetupManager,
+        overlays: &mut OverlayWindowManager<OpenVrOverlayData>,
+        anchor: &mut Affine3A,
+    ) {
+        let Some(before) = get_working_copy(&self.universe, chaperone_mgr) else {
+            log::warn!("Can't reset offset - failed to get zero pose");
+            return;
         };
+
+        let mut xform = self.playspace_state.openvr_space_center;
+        if self.universe == ETrackingUniverseOrigin::TrackingUniverseSeated {
+            xform.translation.y -= 1.7;
+        }
 
         set_working_copy(&self.universe, chaperone_mgr, &xform);
         chaperone_mgr.commit_working_copy(EChaperoneConfigFile::EChaperoneConfigFile_Live);
+
+        playspace_common::shift_world(overlays, anchor, &before, &xform);
 
         if self.drag.is_some() {
             log::info!("Space drag interrupted by manual reset");
@@ -213,7 +219,14 @@ impl PlayspaceMover {
         }
     }
 
-    pub fn fix_floor(&mut self, chaperone_mgr: &mut ChaperoneSetupManager, input: &InputState) {
+    pub fn fix_floor(
+        &mut self,
+        chaperone_mgr: &mut ChaperoneSetupManager,
+        app: &mut AppState,
+        overlays: &mut OverlayWindowManager<OpenVrOverlayData>,
+    ) {
+        let input = &app.input_state;
+        let anchor = &mut app.anchor;
         let y1 = input.pointers[0].pose.translation.y;
         let y2 = input.pointers[1].pose.translation.y;
         let Some(mut mat) = get_working_copy(&self.universe, chaperone_mgr) else {
@@ -221,10 +234,14 @@ impl PlayspaceMover {
             return;
         };
         let offset = y1.min(y2) - 0.03;
+        let before = mat;
         mat.translation.y += offset;
+        self.playspace_state.openvr_space_center.translation.y = mat.translation.y;
 
         set_working_copy(&self.universe, chaperone_mgr, &mat);
         chaperone_mgr.commit_working_copy(EChaperoneConfigFile::EChaperoneConfigFile_Live);
+
+        playspace_common::shift_world(overlays, anchor, &before, &mat);
 
         if self.drag.is_some() {
             log::info!("Space drag interrupted by fix floor");
@@ -236,18 +253,12 @@ impl PlayspaceMover {
         }
     }
 
-    pub fn recenter(&mut self, chaperone_mgr: &mut ChaperoneSetupManager, input: &InputState) {
-        let Some(mut mat) = get_working_copy(&self.universe, chaperone_mgr) else {
-            log::warn!("Can't recenter - failed to get zero pose");
-            return;
-        };
-
-        mat.translation.x += input.hmd.translation.x;
-        mat.translation.z += input.hmd.translation.z;
-
-        set_working_copy(&self.universe, chaperone_mgr, &mat);
-        chaperone_mgr.commit_working_copy(EChaperoneConfigFile::EChaperoneConfigFile_Live);
-
+    pub fn recenter(
+        &mut self,
+        chaperone_mgr: &mut ChaperoneSetupManager,
+        app: &mut AppState,
+        overlays: &mut OverlayWindowManager<OpenVrOverlayData>,
+    ) {
         if self.drag.is_some() {
             log::info!("Space drag interrupted by recenter");
             self.drag = None;
@@ -256,6 +267,52 @@ impl PlayspaceMover {
             log::info!("Space rotate interrupted by recenter");
             self.rotate = None;
         }
+
+        let input = &app.input_state;
+        let anchor = &mut app.anchor;
+
+        let Some(mat) = get_working_copy(&self.universe, chaperone_mgr) else {
+            log::warn!("Can't recenter - failed to get zero pose");
+            return;
+        };
+
+        let before = mat;
+
+        let cur_rot: Quat = Quat::from_affine3(&mat);
+        let cur_pos: Vec3 = Vec3::from(mat.translation);
+
+        let mut stage_offset = Affine3A::from_rotation_translation(cur_rot, cur_pos);
+
+        let horiz_hmd_pos = Vec3::new(input.hmd.translation.x, 0.0, input.hmd.translation.z);
+
+        let fwd = input.hmd.transform_vector3a(Vec3A::NEG_Z);
+        let horiz_len_sq = fwd.x.mul_add(fwd.x, fwd.z * fwd.z);
+
+        let hmd_yaw = if horiz_len_sq > f32::EPSILON {
+            let yaw = (-fwd.x).atan2(-fwd.z);
+            Quat::from_rotation_y(yaw)
+        } else {
+            Quat::IDENTITY
+        };
+
+        let recenter_offset = Affine3A::from_rotation_translation(hmd_yaw, horiz_hmd_pos);
+
+        stage_offset *= recenter_offset;
+
+        let (_, new_rot, new_pos) = stage_offset.to_scale_rotation_translation();
+
+        let new_mat = if horiz_len_sq > f32::EPSILON {
+            Affine3A::from_rotation_translation(new_rot, new_pos)
+        } else {
+            let mut m = mat;
+            m.translation = new_pos.into();
+            m
+        };
+
+        set_working_copy(&self.universe, chaperone_mgr, &new_mat);
+        chaperone_mgr.commit_working_copy(EChaperoneConfigFile::EChaperoneConfigFile_Live);
+
+        playspace_common::shift_world(overlays, anchor, &before, &new_mat);
     }
 
     pub fn playspace_changed(
@@ -285,6 +342,26 @@ impl PlayspaceMover {
 
     pub fn get_universe(&self) -> ETrackingUniverseOrigin {
         self.universe.clone()
+    }
+
+    pub fn save_center(&mut self, chaperone_mgr: &mut ChaperoneSetupManager) {
+        if self.drag.is_some() {
+            log::info!("Space drag interrupted by save center");
+            self.drag = None;
+        }
+        if self.rotate.is_some() {
+            log::info!("Space rotate interrupted by save center");
+            self.rotate = None;
+        }
+
+        let Some(mat) = get_working_copy(&self.universe, chaperone_mgr) else {
+            log::warn!("Can't save center - failed to get zero pose");
+            return;
+        };
+
+        self.playspace_state.openvr_space_center = mat;
+        let _ =
+            save_playspace_state(&self.playspace_state).log_err("Could not save playspace state");
     }
 }
 

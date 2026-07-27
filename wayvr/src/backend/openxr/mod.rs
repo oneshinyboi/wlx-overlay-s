@@ -13,18 +13,17 @@ use vulkano::{Handle, VulkanObject};
 use wlx_common::overlays::{StereoMode, ToastTopic};
 
 use crate::{
-    FRAME_COUNTER, RUNNING,
+    Args, FRAME_COUNTER, RUNNING,
     backend::{
         BackendError, XrBackend,
         input::interact,
-        openxr::{lines::LinePool, overlay::OpenXrOverlayData},
+        openxr::{helpers::try_apply_chroma_key, lines::LinePool, overlay::OpenXrOverlayData},
         task::{OpenXrTask, OverlayTask, TaskType},
     },
     config::{save_settings, save_state},
     graphics::{GpuFutures, init_openxr_graphics},
     overlays::{toast::Toast, watch::WATCH_NAME},
     state::AppState,
-    subsystem::notifications::NotificationManager,
     windowing::{
         backend::{RenderResources, RenderTarget, ShouldRender},
         manager::OverlayWindowManager,
@@ -53,11 +52,13 @@ struct XrState {
 }
 
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
-pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendError> {
+pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
     let (xr_instance, system) = match helpers::init_xr() {
         Ok((xr_instance, system)) => (xr_instance, system),
         Err(e) => {
-            log::warn!("Will not use OpenXR: {e}");
+            if !args.wait {
+                log::warn!("Will not use OpenXR: {e}");
+            }
             return Err(BackendError::NotSupported);
         }
     };
@@ -67,29 +68,28 @@ pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendEr
         AppState::from_graphics(gfx, gfx_extras, XrBackend::OpenXR)?
     };
 
+    app.session.no_autostart = args.no_autostart;
+
     let modes = xr_instance.enumerate_environment_blend_modes(system, VIEW_TYPE)?;
 
-    if show_by_default {
+    if args.show {
+        app.session.config.tutorial_graduated = true;
         app.tasks.enqueue_at(
             TaskType::Overlay(OverlayTask::ShowHide),
             Instant::now().add(Duration::from_secs(1)),
         );
     }
 
-    let mut overlays = OverlayWindowManager::<OpenXrOverlayData>::new(&mut app, headless)?;
+    let mut overlays = OverlayWindowManager::<OpenXrOverlayData>::new(&mut app, args.headless)?;
     let mut lines = LinePool::new(&app)?;
     let mut current_lines = Vec::with_capacity(2);
 
-    let mut notifications = NotificationManager::new();
-    notifications.run_dbus(&mut app.dbus);
-    notifications.run_udp();
-
     let mut delete_queue = vec![];
 
-    app.monado_state_init();
+    app.late_init();
 
-    let mut playspace = app.monado_state.as_mut().and_then(|m| {
-        playspace::PlayspaceMover::new(&mut m.ipc)
+    let mut playspace_mover = app.monado_state.as_mut().and_then(|m| {
+        playspace::PlayspaceMover::new()
             .map_err(|e| log::warn!("Will not use Monado playspace mover: {e}"))
             .ok()
     });
@@ -149,8 +149,12 @@ pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendEr
 
     let mut main_session_visible = false;
     let mut environment_blend_mode = modes[0];
+    let mut last_frame_time = Instant::now();
 
     'main_loop: loop {
+        let now = Instant::now();
+        app.delta_time = (now.duration_since(last_frame_time).as_secs_f32()).clamp(0.001, 0.2); // 5 - 1000 fps
+        last_frame_time = now;
         let cur_frame = FRAME_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         if !RUNNING.load(Ordering::Relaxed) {
@@ -290,8 +294,8 @@ pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendEr
                 .enqueue(TaskType::Overlay(OverlayTask::ToggleDashboard));
         }
 
-        if let Some(ref mut space_mover) = playspace {
-            space_mover.update(&mut overlays, &mut app);
+        if let Some(ref mut playspace_mover) = playspace_mover {
+            playspace_mover.update(&mut overlays, &mut app);
         }
 
         for o in overlays.values_mut() {
@@ -340,9 +344,12 @@ pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendEr
         app.hid_provider.inner.commit();
 
         let watch = overlays.mut_by_id(watch_id).unwrap(); // want panic
+        if watch.config.active_state.is_none() {
+            watch.config.activate(&mut app);
+        }
         let watch_state = watch.config.active_state.as_mut().unwrap();
         let watch_transform = watch_state.transform;
-        if watch_state.alpha < 0.05 {
+        if watch_state.alpha < 0.05 || !app.session.config.enable_watch {
             //FIXME: Temporary workaround for Monado bug
             watch_state.transform = Affine3A::from_scale(Vec3 {
                 x: 0.001,
@@ -462,12 +469,13 @@ pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendEr
         )?;
         // End layer submit
 
-        app.dbus.tick();
-        notifications.submit_pending(&mut app);
-
+        app.tick();
         app.tasks.retrieve_due(&mut due_tasks);
         while let Some(task) = due_tasks.pop_front() {
             match task {
+                TaskType::Global(task) => {
+                    task(&mut app);
+                }
                 TaskType::Input(task) => {
                     app.input_state.handle_task(task);
                 }
@@ -475,12 +483,12 @@ pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendEr
                     overlays.handle_task(&mut app, task)?;
                 }
                 TaskType::Playspace(task) => {
-                    if let Some(playspace) = playspace.as_mut() {
-                        playspace.handle_task(&mut app, task);
+                    if let Some(playspace_mover) = playspace_mover.as_mut() {
+                        playspace_mover.handle_task(&mut app, &mut overlays, task);
                     }
                 }
                 TaskType::OpenXR(task) => {
-                    if matches!(task, OpenXrTask::SettingsChanged) {
+                    if matches!(task, OpenXrTask::EnvironmentChanged) {
                         reconfigure_environment_blend(
                             &app,
                             &xr_state,
@@ -504,7 +512,13 @@ pub fn openxr_run(show_by_default: bool, headless: bool) -> Result<(), BackendEr
 
         //FIXME: Temporary workaround for Monado bug
         let watch = overlays.mut_by_id(watch_id).unwrap(); // want panic
-        watch.config.active_state.as_mut().unwrap().transform = watch_transform;
+
+        if let Some(state) = watch.config.active_state.as_mut() {
+            state.transform = watch_transform;
+        }
+        if !app.session.config.enable_watch {
+            watch.config.deactivate();
+        }
     } // main_loop
 
     if let (Some(blocker), Some(monado)) = (blocker, app.monado_state.as_mut()) {
@@ -529,6 +543,9 @@ pub(super) enum CompositionLayer<'a> {
     Equirect2(xr::CompositionLayerEquirect2KHR<'a, xr::Vulkan>),
 }
 
+// applies chroma key settings.
+// if chroma key or passthrough is enabled, use alpha env blend
+// if alpha blend is not used and skybox is enabled, use skybox
 fn reconfigure_environment_blend(
     app: &AppState,
     xr_state: &XrState,
@@ -537,9 +554,11 @@ fn reconfigure_environment_blend(
     environment_blend_mode: &mut xr::EnvironmentBlendMode,
     main_session_visible: bool,
 ) {
+    let has_chroma_key = try_apply_chroma_key(app);
+
     *environment_blend_mode = {
         if modes.contains(&xr::EnvironmentBlendMode::ALPHA_BLEND)
-            && app.session.config.use_passthrough
+            && (app.session.config.use_passthrough || has_chroma_key)
         {
             xr::EnvironmentBlendMode::ALPHA_BLEND
         } else {
@@ -551,13 +570,17 @@ fn reconfigure_environment_blend(
         && app.session.config.use_skybox
         && !main_session_visible;
 
-    if want_skybox == skybox.is_some() {
-        return;
-    }
-
     if want_skybox {
-        log::debug!("Allocating skybox.");
-        *skybox = create_skybox(xr_state, app);
+        if let Some(curr_skybox) = skybox.as_ref() {
+            if curr_skybox.needs_recreate(app) {
+                *skybox = None;
+                log::debug!("Allocating skybox.");
+                *skybox = create_skybox(xr_state, app);
+            }
+        } else {
+            log::debug!("Allocating skybox.");
+            *skybox = create_skybox(xr_state, app);
+        }
     } else {
         log::debug!("Destroying skybox.");
         *skybox = None;

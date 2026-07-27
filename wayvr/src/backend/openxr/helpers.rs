@@ -15,6 +15,8 @@ macro_rules! next_chain_insert {
 }
 pub(crate) use next_chain_insert;
 
+use crate::state::AppState;
+
 pub(super) fn init_xr() -> Result<(xr::Instance, xr::SystemId), anyhow::Error> {
     let entry = xr::Entry::linked();
 
@@ -38,6 +40,11 @@ pub(super) fn init_xr() -> Result<(xr::Instance, xr::SystemId), anyhow::Error> {
         enabled_extensions.ext_dpad_binding = true;
     } else {
         log::warn!("Missing EXT_dpad_binding extension.");
+    }
+    if available_extensions.ext_samsung_odyssey_controller {
+        enabled_extensions.ext_samsung_odyssey_controller = true;
+    } else {
+        log::warn!("Missing XR_EXT_samsung_odyssey_controller extension.");
     }
     if available_extensions.ext_hp_mixed_reality_controller {
         enabled_extensions.ext_hp_mixed_reality_controller = true;
@@ -70,9 +77,14 @@ pub(super) fn init_xr() -> Result<(xr::Instance, xr::SystemId), anyhow::Error> {
         log::warn!("Missing XR_KHR_composition_layer_color_scale_bias extension.");
     }
 
-    let xr_mndx_system_buttons = b"XR_MNDX_system_buttons".to_vec();
-    if available_extensions.other.contains(&xr_mndx_system_buttons) {
-        enabled_extensions.other.push(xr_mndx_system_buttons);
+    let xr_extension = b"XR_MNDX_system_buttons".to_vec();
+    if available_extensions.other.contains(&xr_extension) {
+        enabled_extensions.other.push(xr_extension);
+    }
+
+    let xr_extension = b"XR_VALVE_frame_controller_interaction".to_vec();
+    if available_extensions.other.contains(&xr_extension) {
+        enabled_extensions.other.push(xr_extension);
     }
 
     //#[cfg(not(debug_assertions))]
@@ -208,4 +220,26 @@ pub(super) fn posef_to_transform(pose: &xr::Posef) -> Affine3A {
     let rotation = QuatM::from(pose.orientation).into();
     let translation = Vec3M::from(pose.position).into();
     Affine3A::from_rotation_translation(rotation, translation)
+}
+
+pub(super) fn try_apply_chroma_key(app: &AppState) -> bool {
+    let Some(monado) = app.monado_state.as_ref() else {
+        log::warn!("Could not set Chroma Key: no monado_state");
+        return false;
+    };
+
+    let params = &app.session.config.chroma_key_params;
+
+    if let Err(e) = monado.ipc.set_chroma_key_params(
+        params.hsv_min[0]..params.hsv_max[0],
+        params.hsv_min[1]..params.hsv_max[1],
+        params.hsv_min[2]..params.hsv_max[2],
+        params.curve,
+        params.despill,
+    ) {
+        log::warn!("Could not set Chroma Key: {e:?}");
+        return false;
+    }
+
+    params.curve > 0.001
 }

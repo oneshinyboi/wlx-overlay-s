@@ -13,12 +13,15 @@ impl TestbedDashboard {
 	pub fn new() -> anyhow::Result<Self> {
 		let interface = DashInterfaceEmulated::new();
 		let lang_provider = WayVRLangProvider::default();
+		let palette_name = std::env::var("PALETTE").unwrap_or_else(|_| "Default".to_string());
 
 		let frontend = frontend::Frontend::new(frontend::InitParams {
 			interface: Box::new(interface),
+			show_welcome: false,
 			has_monado: true,
 			lang_provider: &lang_provider,
 			theme: Rc::new(WguiTheme::default()),
+			color_palette: &palette_name,
 		})?;
 		Ok(Self { frontend })
 	}

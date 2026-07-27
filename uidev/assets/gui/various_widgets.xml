@@ -59,7 +59,11 @@
         </div>
       </rectangle>
 
-      <div>
+      <div gap="4" flex_direction="column">
+        <rectangle macro="rect">
+          <label text="Color selector!"/>
+          <ColorSelector />
+        </rectangle>
         <rectangle macro="rect">
           <label text="Context menu test" />
           <Button id="button_context_menu" text="Show context menu" />
@@ -88,6 +92,11 @@
         <CheckBox id="cb_first" text="I'm a checkbox!" />
         <CheckBox text="and me too!" />
         <CheckBox text="i'm checked by default" checked="1" />
+      </rectangle>
+    
+      <rectangle macro="rect" flex_direction="row" gap="16">
+        <label text="range slider test" weight="bold" />
+        <Slider value="0.5" value2="1.0" min_value="-5.0" max_value="20.0" width="200" height="24"/>
       </rectangle>
 
       <rectangle macro="rect" flex_direction="row" align_items="start">

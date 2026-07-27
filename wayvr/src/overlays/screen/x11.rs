@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
-use glam::vec2;
+use glam::{DVec2, vec2};
 use wlx_capture::{
     WlxCapture,
     frame::Transform,
     xshm::{XshmCapture, XshmScreen},
 };
 
+#[cfg(feature = "pipewire")]
+use crate::state::save_pw_token_config;
 use crate::{
     overlays::screen::{backend::CaptureType, create_screen_from_backend},
     state::{AppState, ScreenMeta},
@@ -19,7 +21,9 @@ use super::{
 };
 
 #[cfg(feature = "pipewire")]
-use wlx_capture::pipewire::PipewireStream;
+use wlx_capture::pipewire::{
+    PipewireStream, ScreenCastParams, capture::PipewireCapture, screen_cast_select_blocking,
+};
 
 impl ScreenBackend {
     pub fn new_xshm(screen: Arc<XshmScreen>, app: &AppState) -> Self {
@@ -38,43 +42,41 @@ impl ScreenBackend {
 
 #[cfg(feature = "pipewire")]
 pub fn create_screens_x11pw(app: &mut AppState) -> anyhow::Result<ScreenCreateData> {
-    use glam::vec2;
-    use wlx_capture::{pipewire::PipewireCapture, xshm::xshm_get_monitors};
-    use wlx_common::{astr_containers::AStrMapExt, config::PwTokenMap};
+    use wlx_capture::xshm::xshm_get_monitors;
+    use wlx_common::astr_containers::AStrMapExt;
 
-    use crate::{
-        overlays::screen::{
-            create_screen_from_backend,
-            pw::{load_pw_token_config, save_pw_token_config, select_pw_screen},
-        },
-        state::ScreenMeta,
-    };
+    use crate::{overlays::screen::create_screen_from_backend, state::ScreenMeta};
 
     use super::ScreenCreateData;
 
-    // Load existing Pipewire tokens from file
-    let mut pw_tokens: PwTokenMap = load_pw_token_config().unwrap_or_default();
-    let pw_tokens_copy = pw_tokens.clone();
-    let token = pw_tokens.arc_get("x11").map(std::string::String::as_str);
-    let embed_mouse = !app.session.config.double_cursor_fix;
+    let pw_tokens_copy = app.session.pw_tokens.clone();
 
-    let select_screen_result = select_pw_screen(
-        "Select ALL screens on the screencast pop-up!",
-        token,
-        embed_mouse,
-        true,
-        true,
-        true,
-    )?;
+    let params = ScreenCastParams {
+        token: app
+            .session
+            .pw_tokens
+            .arc_get("x11")
+            .map(|x| x.to_string().into()),
+        embed_mouse: !app.session.config.double_cursor_fix,
+        allow_multiple: true,
+        persist: true,
+        screens_only: true,
+    };
+
+    // this one still blocks
+    let select_screen_result = screen_cast_select_blocking(params)?;
 
     if let Some(restore_token) = select_screen_result.restore_token
-        && pw_tokens.arc_set("x11".into(), restore_token.clone())
+        && app
+            .session
+            .pw_tokens
+            .arc_set("x11".into(), restore_token.clone())
     {
         log::info!("Adding Pipewire token {restore_token}");
     }
-    if pw_tokens_copy != pw_tokens {
+    if pw_tokens_copy != app.session.pw_tokens {
         // Token list changed, re-create token config file
-        if let Err(err) = save_pw_token_config(pw_tokens) {
+        if let Err(err) = save_pw_token_config(app.session.pw_tokens.clone()) {
             log::error!("Failed to save Pipewire token config: {err}");
         }
     }
@@ -88,7 +90,7 @@ pub fn create_screens_x11pw(app: &mut AppState) -> anyhow::Result<ScreenCreateDa
     log::info!("Got {} monitors", monitors.len());
     log::info!("Got {} streams", select_screen_result.streams.len());
 
-    let mut extent = vec2(0., 0.);
+    let mut extent = DVec2::ZERO;
     let screens = select_screen_result
         .streams
         .into_iter()
@@ -96,8 +98,8 @@ pub fn create_screens_x11pw(app: &mut AppState) -> anyhow::Result<ScreenCreateDa
         .map(|(i, s)| {
             let m = best_match(&s, monitors.iter().map(AsRef::as_ref)).unwrap();
             log::info!("Stream {i} is {}", m.name);
-            extent.x = extent.x.max((m.monitor.x() + m.monitor.width()) as f32);
-            extent.y = extent.y.max((m.monitor.y() + m.monitor.height()) as f32);
+            extent.x = extent.x.max((m.monitor.x() + m.monitor.width()) as _);
+            extent.y = extent.y.max((m.monitor.y() + m.monitor.height()) as _);
 
             let mut backend = ScreenBackend::new_raw(
                 m.name.clone(),
@@ -130,7 +132,7 @@ pub fn create_screens_x11pw(app: &mut AppState) -> anyhow::Result<ScreenCreateDa
         .collect();
 
     app.hid_provider.inner.set_desktop_extent(extent);
-    app.hid_provider.inner.set_desktop_origin(vec2(0.0, 0.0));
+    app.hid_provider.inner.set_desktop_origin(DVec2::ZERO);
 
     Ok(ScreenCreateData { screens })
 }
@@ -166,7 +168,7 @@ fn best_match<'a>(
 pub fn create_screens_xshm(app: &mut AppState) -> anyhow::Result<ScreenCreateData> {
     use wlx_capture::xshm::xshm_get_monitors;
 
-    let mut extent = vec2(0., 0.);
+    let mut extent = DVec2::ZERO;
 
     let monitors = match xshm_get_monitors() {
         Ok(m) => m,
@@ -178,8 +180,8 @@ pub fn create_screens_xshm(app: &mut AppState) -> anyhow::Result<ScreenCreateDat
     let screens = monitors
         .into_iter()
         .map(|s| {
-            extent.x = extent.x.max((s.monitor.x() + s.monitor.width()) as f32);
-            extent.y = extent.y.max((s.monitor.y() + s.monitor.height()) as f32);
+            extent.x = extent.x.max((s.monitor.x() + s.monitor.width()) as _);
+            extent.y = extent.y.max((s.monitor.y() + s.monitor.height()) as _);
 
             let size = (s.monitor.width(), s.monitor.height());
             let pos = (s.monitor.x(), s.monitor.y());
@@ -213,7 +215,7 @@ pub fn create_screens_xshm(app: &mut AppState) -> anyhow::Result<ScreenCreateDat
         .collect();
 
     app.hid_provider.inner.set_desktop_extent(extent);
-    app.hid_provider.inner.set_desktop_origin(vec2(0.0, 0.0));
+    app.hid_provider.inner.set_desktop_origin(DVec2::ZERO);
 
     Ok(ScreenCreateData { screens })
 }

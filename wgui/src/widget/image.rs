@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use slotmap::Key;
 
 use crate::{
+	color::WguiColor,
 	drawing::{self, ImagePrimitive, PrimitiveExtent},
-	event::CallbackDataCommon,
+	event::EventAlterables,
 	globals::Globals,
 	layout::WidgetID,
 	renderer_vk::text::custom_glyph::CustomGlyphData,
@@ -20,7 +21,7 @@ pub struct WidgetImageParams {
 	pub glyph_data: Option<CustomGlyphData>,
 
 	pub border: f32,
-	pub border_color: drawing::Color,
+	pub border_color: WguiColor,
 
 	pub round: WLength,
 }
@@ -30,6 +31,7 @@ pub struct WidgetImage {
 	params: WidgetImageParams,
 	id: WidgetID,
 	content_key: usize,
+	dirty: bool,
 }
 
 impl WidgetImage {
@@ -40,17 +42,19 @@ impl WidgetImage {
 				params,
 				id: WidgetID::null(),
 				content_key: AUTO_INCREMENT.fetch_add(1, Ordering::Relaxed),
+				dirty: true,
 			}),
 		)
 	}
 
-	pub fn set_content(&mut self, common: &mut CallbackDataCommon, content: Option<CustomGlyphData>) {
+	pub fn set_content(&mut self, alterables: &mut EventAlterables, content: Option<CustomGlyphData>) {
 		if self.params.glyph_data == content {
 			return;
 		}
 
 		self.params.glyph_data = content;
-		common.mark_widget_dirty(self.id);
+		self.dirty = true;
+		alterables.mark_dirty_and_redraw(self.id);
 	}
 
 	pub fn get_content(&self) -> Option<CustomGlyphData> {
@@ -79,11 +83,13 @@ impl WidgetObj for WidgetImage {
 			ImagePrimitive {
 				content,
 				content_key: self.content_key,
+				skip_cache: self.dirty,
 				border: self.params.border,
-				border_color: self.params.border_color,
+				border_color: self.params.border_color.resolve(&state.globals.palette),
 				round_units,
 			},
 		));
+		self.dirty = false;
 	}
 
 	fn measure(
@@ -107,7 +113,7 @@ impl WidgetObj for WidgetImage {
 		super::WidgetType::Sprite
 	}
 
-	fn debug_print(&self) -> String {
+	fn debug_print(&self, _globals: &Globals) -> String {
 		String::default()
 	}
 }

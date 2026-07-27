@@ -6,7 +6,7 @@ use wlx_common::windowing::{OverlayWindowState, Positioning};
 
 use crate::{
     state::{AppSession, AppState, ScreenMeta},
-    subsystem::input::KeyboardFocus,
+    subsystem::input::InputFocus,
     windowing::{
         backend::OverlayBackend,
         window::{OverlayCategory, OverlayWindowConfig},
@@ -50,13 +50,13 @@ fn create_screen_from_backend(
             interactable: true,
             curvature: Some(0.15),
             transform: Affine3A::from_scale_rotation_translation(
-                Vec3::ONE * 1.5 * session.config.desktop_view_scale,
+                Vec3::ONE * 1.5 * session.config.default_overlay_scale,
                 Quat::from_rotation_z(angle),
                 vec3(0.0, 0.0, -0.5),
             ),
             ..OverlayWindowState::default()
         },
-        keyboard_focus: Some(KeyboardFocus::PhysicalScreen),
+        input_focus: Some(InputFocus::PhysicalScreen),
         ..OverlayWindowConfig::from_backend(backend)
     }
 }
@@ -72,7 +72,7 @@ pub fn create_screens(app: &mut AppState) -> anyhow::Result<(ScreenCreateData, b
     {
         if let Some(mut wl) = wlx_capture::wayland::WlxClient::new() {
             log::info!("Wayland detected.");
-            return Ok((wl::create_screens_wayland(&mut wl, app), true));
+            return Ok((wl::create_screens_wayland(&mut wl, app)?, true));
         }
         log::info!("Wayland not detected, assuming X11.");
     }

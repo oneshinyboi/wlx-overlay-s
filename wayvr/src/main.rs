@@ -34,6 +34,7 @@ use std::{
     path::PathBuf,
     process::Command,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    time::{Duration, Instant},
 };
 
 use clap::Parser;
@@ -64,13 +65,21 @@ struct Args {
     #[arg(long)]
     openxr: bool,
 
-    /// Show the working set of overlay on startup
+    /// Show the working set of overlay on startup. Also skips tutorial.
     #[arg(long)]
     show: bool,
 
-    /// Uninstall OpenVR manifest and exit
+    /// Wait for a runtime to be available instead of exiting
+    #[arg(long)]
+    wait: bool,
+
+    /// Uninstall SteamVR manifest and exit
     #[arg(long)]
     uninstall: bool,
+
+    /// Install SteamVR manifest (not recommended; WayVR may have issues when auto-started by SteamVR!)
+    #[arg(long)]
+    install: bool,
 
     /// Replace running WayVR instance
     #[arg(long)]
@@ -83,6 +92,10 @@ struct Args {
     /// Disable desktop access altogether.
     #[arg(long)]
     headless: bool,
+
+    /// Do not auto-start registered apps
+    #[arg(long)]
+    no_autostart: bool,
 
     /// Path to write logs to
     #[arg(short, long, value_name = "FILE_PATH")]
@@ -106,9 +119,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     logging_init(&mut args);
 
     log::info!(
-        "Welcome to {} version {}!",
+        "Welcome to {} version {}!{}",
         env!("CARGO_PKG_NAME"),
         env!("WLX_BUILD"),
+        if std::env::var("APPDIR").is_ok() {
+            " (AppImage)"
+        } else {
+            ""
+        }
     );
     log::info!("It is {}.", chrono::Local::now().format("%c"));
 
@@ -146,39 +164,54 @@ fn auto_run(args: Args, used_backend: &mut Option<XrBackend>) {
     let mut tried_xr = false;
     let mut tried_vr = false;
 
-    #[cfg(feature = "openxr")]
-    if !args_get_openvr(&args) {
-        use crate::backend::{BackendError, openxr::openxr_run};
-        tried_xr = true;
-        match openxr_run(args.show, args.headless) {
-            Ok(()) => {
-                used_backend.replace(XrBackend::OpenXR);
-                return;
-            }
-            Err(BackendError::NotSupported) => (),
-            Err(e) => {
-                used_backend.replace(XrBackend::OpenXR);
-                log::error!("{e:?}");
-                return;
+    loop {
+        #[cfg(feature = "openxr")]
+        if !args_get_openvr(&args) {
+            use crate::backend::{BackendError, openxr::openxr_run};
+            tried_xr = true;
+            match openxr_run(&args) {
+                Ok(()) => {
+                    used_backend.replace(XrBackend::OpenXR);
+                    return;
+                }
+                Err(BackendError::NotSupported) => (),
+                Err(e) => {
+                    used_backend.replace(XrBackend::OpenXR);
+                    log::error!("{e:?}");
+                    return;
+                }
             }
         }
-    }
 
-    #[cfg(feature = "openvr")]
-    if !args_get_openxr(&args) {
-        use crate::backend::{BackendError, openvr::openvr_run};
-        tried_vr = true;
-        match openvr_run(args.show, args.headless) {
-            Ok(()) => {
-                used_backend.replace(XrBackend::OpenVR);
-                return;
+        #[cfg(feature = "openvr")]
+        if !args_get_openxr(&args) {
+            use crate::backend::{BackendError, openvr::openvr_run};
+            tried_vr = true;
+            match openvr_run(&args) {
+                Ok(()) => {
+                    used_backend.replace(XrBackend::OpenVR);
+                    return;
+                }
+                Err(BackendError::NotSupported) => (),
+                Err(e) => {
+                    used_backend.replace(XrBackend::OpenVR);
+                    log::error!("{e:?}");
+                    return;
+                }
             }
-            Err(BackendError::NotSupported) => (),
-            Err(e) => {
-                used_backend.replace(XrBackend::OpenVR);
-                log::error!("{e:?}");
-                return;
+        }
+
+        if args.wait {
+            // wait 5s unless we get signaled
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if !RUNNING.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
             }
+        } else {
+            break;
         }
     }
 

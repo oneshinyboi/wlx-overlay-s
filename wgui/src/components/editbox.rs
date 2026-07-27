@@ -8,12 +8,12 @@ use taffy::prelude::{auto, length, percent};
 
 use crate::{
 	animation::{Animation, AnimationEasing},
+	color::{WguiColor, WguiColorName},
 	components::{Component, ComponentBase, ComponentTrait, FocusChangeData, RefreshData},
-	drawing::{self, Color},
 	event::{self, CallbackDataCommon, CallbackMetadata, EventListenerCollection, EventListenerKind, StyleSetRequest},
 	i18n::Translation,
 	layout::{WidgetID, WidgetPair},
-	renderer_vk::text::{TextShadow, TextStyle},
+	renderer_vk::text::{TextStyle, WguiTextShadow},
 	widget::{
 		ConstructEssentials, EventResult,
 		div::WidgetDiv,
@@ -55,7 +55,7 @@ pub struct ComponentEditBox {
 
 fn anim_bottom_rect(
 	common: &mut CallbackDataCommon,
-	accent_color: drawing::Color,
+	accent_color: WguiColor,
 	id_rect: WidgetID,
 	anim_mult: f32,
 	focused: bool,
@@ -69,10 +69,12 @@ fn anim_bottom_rect(
 				let rect = data.obj.get_as_mut::<WidgetRectangle>().unwrap();
 				let pos_bidir = if focused { data.pos } else { 1.0 - data.pos };
 
-				rect.set_color(
-					common,
-					accent_color.lerp(&drawing::Color::new(1.0, 1.0, 1.0, 1.0), pos_bidir),
+				let color_lerped = accent_color.lerp(
+					&common.globals().palette,
+					&WguiColorName::OnBackgroundVariant.into(),
+					pos_bidir,
 				);
+				rect.set_color(common, color_lerped);
 
 				common.alterables.set_style(
 					data.widget_id,
@@ -100,9 +102,9 @@ fn anim_bottom_rect(
 
 fn refresh_all(common: &mut CallbackDataCommon, data: &Data, state: &mut State) -> Option<()> {
 	let theme = &common.state.theme;
-	let editbox_color = theme.editbox_color;
+	let editbox_color = WguiColor::from(WguiColorName::BackgroundVariant);
+	let accent_color = WguiColor::from(WguiColorName::Primary);
 	let anim_mult = theme.animation_mult;
-	let accent_color = theme.accent_color;
 
 	let (rect_color, border_color) = if state.focused {
 		(editbox_color.add_rgb(0.15), editbox_color.add_rgb(0.15 + 0.25))
@@ -123,14 +125,7 @@ fn refresh_all(common: &mut CallbackDataCommon, data: &Data, state: &mut State) 
 	}
 
 	// Cursor
-	common.alterables.set_style(
-		data.id_rect_cursor,
-		StyleSetRequest::Display(if state.focused {
-			taffy::Display::Flex
-		} else {
-			taffy::Display::None
-		}),
-	);
+	common.alterables.set_widget_visible(data.id_rect_cursor, state.focused);
 
 	state.first_refresh = false;
 
@@ -148,7 +143,7 @@ impl ComponentTrait for ComponentEditBox {
 
 	fn refresh(&self, data: &mut RefreshData) {
 		let mut state = self.state.borrow_mut();
-		let res = refresh_all(data.common, &self.data, &mut state);
+		let res = refresh_all(&mut data.layout.common(), &self.data, &mut state);
 		debug_assert!(res.is_some());
 	}
 
@@ -278,7 +273,7 @@ pub fn construct(
 	ess: &mut ConstructEssentials,
 	mut params: Params,
 ) -> anyhow::Result<(WidgetPair, Rc<ComponentEditBox>)> {
-	let text_color = ess.layout.state.theme.text_color;
+	let text_color = WguiColor::from(WguiColorName::OnBackgroundVariant);
 
 	if params.style.size.width.is_auto() {
 		params.style.size.width = length(128.0);
@@ -289,7 +284,7 @@ pub fn construct(
 	}
 
 	// override style
-	params.style.align_items = Some(taffy::AlignItems::Center);
+	params.style.align_items = Some(taffy::AlignItems::CENTER);
 	params.style.position = taffy::Position::Relative;
 	params.style.overflow = taffy::Point {
 		x: taffy::Overflow::Scroll,
@@ -314,8 +309,8 @@ pub fn construct(
 		taffy::Style {
 			position: taffy::Position::Absolute,
 			flex_direction: taffy::FlexDirection::Column,
-			align_content: Some(taffy::AlignContent::Center),
-			align_items: Some(taffy::AlignItems::Center),
+			align_content: Some(taffy::AlignContent::CENTER),
+			align_items: Some(taffy::AlignItems::CENTER),
 			size: taffy::Size {
 				width: percent(1.0),
 				height: percent(1.0),
@@ -346,13 +341,14 @@ pub fn construct(
 		WidgetLabelParams {
 			content: Translation::from_raw_text(&params.initial_text),
 			style: TextStyle {
-				shadow: Some(TextShadow {
+				shadow: Some(WguiTextShadow {
 					x: 1.0,
 					y: 1.0,
-					color: Color::new(0.0, 0.0, 0.0, 1.0),
+					..Default::default()
 				}),
 				..Default::default()
 			},
+			..Default::default()
 		},
 	);
 	let (label, _node_label) = ess.layout.add_child(
@@ -371,8 +367,8 @@ pub fn construct(
 			..Default::default()
 		}),
 		taffy::Style {
-			align_self: Some(taffy::AlignSelf::Center),
-			justify_self: Some(taffy::JustifySelf::End),
+			align_self: Some(taffy::AlignSelf::CENTER),
+			justify_self: Some(taffy::JustifySelf::END),
 			min_size: taffy::Size {
 				width: length(2.0),
 				height: length(16.0),

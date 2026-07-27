@@ -6,13 +6,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use glam::vec2;
+use glam::{Vec2, vec2};
 use slotmap::Key;
 use wgui::{
     components::{button::ComponentButton, checkbox::ComponentCheckbox, slider::ComponentSlider},
-    event::{CallbackDataCommon, EventAlterables, EventCallback},
+    event::{CallbackDataCommon, EventCallback, StyleSetRequest},
     i18n::Translation,
     parser::Fetchable,
+    taffy::Display,
     widget::EventResult,
 };
 use wlx_common::overlays::{BackendAttrib, BackendAttribValue, MouseTransform, StereoMode};
@@ -51,6 +52,20 @@ mod sprite_tab;
 mod stereo;
 pub mod tab;
 
+enum ResizeState {
+    None,
+    Start {
+        overlay_id: OverlayID,
+    },
+    Active {
+        overlay_id: OverlayID,
+        pointer: usize,
+        start_uv: Vec2,
+        last_uv: Vec2,
+        last_extent: [u32; 2],
+    },
+}
+
 struct EditModeState {
     tasks: Rc<RefCell<TaskContainer>>,
     id: Rc<RefCell<OverlayID>>,
@@ -59,6 +74,23 @@ struct EditModeState {
     pos: SpriteTabHandler<PosTabState>,
     stereo: SpriteTabHandler<StereoMode>,
     mouse: SpriteTabHandler<MouseTransform>,
+    resize: ResizeState,
+}
+
+impl EditModeState {
+    fn resize_end(&mut self, app: &mut AppState) {
+        match std::mem::replace(&mut self.resize, ResizeState::None) {
+            ResizeState::Active { overlay_id, .. } => {
+                app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+                    OverlaySelector::Id(overlay_id),
+                    Box::new(|_app, owc| {
+                        owc.resizing = false;
+                    }),
+                )));
+            }
+            _ => {}
+        }
+    }
 }
 
 type EditModeWrapPanel = GuiPanel<EditModeState>;
@@ -94,6 +126,7 @@ impl EditWrapperManager {
         owc.backend = Box::new(EditModeBackendWrapper {
             inner: ManuallyDrop::new(inner),
             panel: ManuallyDrop::new(panel),
+            extent: [0, 0],
             last_render: Instant::now(),
             can_render_inner: false,
         });
@@ -135,6 +168,7 @@ pub struct EditModeBackendWrapper {
     panel: ManuallyDrop<EditModeWrapPanel>,
     inner: ManuallyDrop<Box<dyn OverlayBackend>>,
 
+    extent: [u32; 2],
     last_render: Instant,
     can_render_inner: bool,
 }
@@ -205,13 +239,18 @@ impl OverlayBackend for EditModeBackendWrapper {
             self.inner.render(app, rdr)?;
         }
 
-        self.panel.render(app, rdr)?;
-        // `GuiPanel` is not stereo-aware, so just render the same pass twice
-        if rdr.cmd_bufs.len() > 1 {
-            rdr.cmd_bufs.reverse();
+        // during resize, just fade the color
+        if matches!(self.panel.state.resize, ResizeState::None) {
             self.panel.render(app, rdr)?;
-            rdr.cmd_bufs.reverse();
+            // `GuiPanel` is not stereo-aware, so just render the same pass twice
+            if rdr.cmd_bufs.len() > 1 {
+                rdr.cmd_bufs.reverse();
+                self.panel.render(app, rdr)?;
+                rdr.cmd_bufs.reverse();
+            }
         }
+
+        self.extent = rdr.extent;
 
         Ok(())
     }
@@ -225,9 +264,43 @@ impl OverlayBackend for EditModeBackendWrapper {
     ) -> HoverResult {
         // pass through hover events to force pipewire to capture frames for us
         let _ = self.inner.on_hover(app, hit);
-        self.panel.on_hover(app, hit)
+        let res = self.panel.on_hover(app, hit);
+
+        match &mut self.panel.state.resize {
+            ResizeState::Active {
+                overlay_id,
+                pointer,
+                start_uv,
+                last_uv,
+                last_extent,
+            } if *pointer == hit.pointer => {
+                fn lerp_u32(a: [u32; 2], b: [u32; 2], t: f32) -> [u32; 2] {
+                    [
+                        (a[0] as f32 + (b[0] as f32 - a[0] as f32) * t).round() as u32,
+                        (a[1] as f32 + (b[1] as f32 - a[1] as f32) * t).round() as u32,
+                    ]
+                }
+
+                // freshest extent we can get is from last frame, so use uv from that frame
+                let want_extent = resize_centered_from_uv(*start_uv, *last_uv, self.extent);
+
+                app.tasks
+                    .enqueue(TaskType::Overlay(OverlayTask::ResizeOverlay(
+                        OverlaySelector::Id(*overlay_id),
+                        lerp_u32(*last_extent, want_extent, 0.33),
+                    )));
+
+                *last_uv = hit.uv;
+                *last_extent = self.extent;
+            }
+            _ => {}
+        }
+
+        res
     }
     fn on_left(&mut self, app: &mut crate::state::AppState, pointer: usize) {
+        self.panel.state.resize_end(app);
+
         self.inner.on_left(app, pointer);
         self.panel.on_left(app, pointer);
     }
@@ -238,6 +311,27 @@ impl OverlayBackend for EditModeBackendWrapper {
         pressed: bool,
     ) {
         self.panel.on_pointer(app, hit, pressed);
+
+        match &mut self.panel.state.resize {
+            ResizeState::Start { overlay_id } => {
+                app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+                    OverlaySelector::Id(*overlay_id),
+                    Box::new(|_app, owc| {
+                        owc.resizing = true;
+                    }),
+                )));
+
+                let last_uv = hit.uv;
+                self.panel.state.resize = ResizeState::Active {
+                    overlay_id: *overlay_id,
+                    pointer: hit.pointer,
+                    start_uv: last_uv,
+                    last_uv: last_uv,
+                    last_extent: self.extent,
+                };
+            }
+            _ => {}
+        }
     }
     fn on_scroll(
         &mut self,
@@ -248,7 +342,8 @@ impl OverlayBackend for EditModeBackendWrapper {
         self.panel.on_scroll(app, hit, delta);
     }
     fn notify(&mut self, app: &mut AppState, event_data: OverlayEventData) -> anyhow::Result<()> {
-        self.panel.notify(app, event_data)
+        self.panel.notify(app, event_data.clone())?;
+        self.inner.notify(app, event_data)
     }
     fn get_interaction_transform(&mut self) -> Option<glam::Affine2> {
         self.inner.get_interaction_transform()
@@ -271,13 +366,14 @@ fn make_edit_panel(app: &mut AppState) -> anyhow::Result<EditModeWrapPanel> {
         pos: SpriteTabHandler::default(),
         stereo: SpriteTabHandler::default(),
         mouse: SpriteTabHandler::default(),
+        resize: ResizeState::None,
     };
 
     let anim_mult = app.wgui_theme.animation_mult;
 
     let on_custom_attrib: OnCustomAttribFunc = Box::new(move |layout, parser, attribs, _app| {
-        let Ok(button) =
-            parser.fetch_component_from_widget_id_as::<ComponentButton>(attribs.widget_id)
+        let Ok(button) = parser
+            .fetch_component_from_widget_id_as::<ComponentButton>(&layout.state, attribs.widget_id)
         else {
             return;
         };
@@ -407,6 +503,22 @@ fn make_edit_panel(app: &mut AppState) -> anyhow::Result<EditModeWrapPanel> {
                         )));
                         Ok(EventResult::Consumed)
                     }),
+                    "::EditModeResizeStart" => Box::new(move |_common, data, app, state| {
+                        if !test_button(data) || !test_duration(&button, app) {
+                            return Ok(EventResult::Pass);
+                        }
+                        state.resize = ResizeState::Start {
+                            overlay_id: state.id.borrow().clone(),
+                        };
+                        Ok(EventResult::Consumed)
+                    }),
+                    "::EditModeResizeStop" => Box::new(move |_common, data, app, state| {
+                        if !test_button(data) || !test_duration(&button, app) {
+                            return Ok(EventResult::Pass);
+                        }
+                        state.resize_end(app);
+                        Ok(EventResult::Consumed)
+                    }),
                     _ => return,
                 };
 
@@ -466,98 +578,82 @@ fn reset_panel(
     *panel.state.id.borrow_mut() = id;
     let state = owc.active_state.as_mut().unwrap();
 
-    let mut alterables = EventAlterables::default();
-    let mut common = CallbackDataCommon {
-        alterables: &mut alterables,
-        state: &panel.layout.state,
-    };
+    let mut com = panel.layout.common();
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentButton>("top_grab")?;
-    c.set_sticky_state(&mut common, !state.grabbable);
+    c.set_sticky_state(&mut com, !state.grabbable);
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentSlider>("lerp_slider")?;
-    c.set_value(&mut common, state.positioning.get_lerp().unwrap_or(1.0));
+    c.set_value_primary(&mut com, state.positioning.get_lerp().unwrap_or(1.0));
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentSlider>("alpha_slider")?;
-    c.set_value(&mut common, state.alpha);
+    c.set_value_primary(&mut com, state.alpha);
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentSlider>("curve_slider")?;
-    c.set_value(&mut common, state.curvature.unwrap_or(0.0));
+    c.set_value_primary(&mut com, state.curvature.unwrap_or(0.0));
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentCheckbox>("additive_box")?;
-    c.set_checked(&mut common, state.additive);
+    c.set_checked(&mut com, state.additive);
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentCheckbox>("align_box")?;
-    c.set_checked(&mut common, state.positioning.get_align().unwrap_or(false));
+    c.set_checked(&mut com, state.positioning.get_align().unwrap_or(false));
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentCheckbox>("global_box")?;
-    c.set_checked(&mut common, owc.global);
+    c.set_checked(&mut com, owc.global);
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentCheckbox>("angle_fade_box")?;
-    c.set_checked(&mut common, state.angle_fade);
+    c.set_checked(&mut com, state.angle_fade);
 
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentCheckbox>("block_input_box")?;
-    c.set_checked(&mut common, state.block_input);
+    c.set_checked(&mut com, state.block_input);
 
-    panel
-        .state
-        .pos
-        .reset(&mut common, &state.positioning.into());
-    panel.state.lock.reset(&mut common, state.interactable);
-    panel.state.tabs.reset(&mut common);
+    panel.state.pos.reset(&mut com, &state.positioning.into());
+    panel.state.lock.reset(&mut com, state.interactable);
+    panel.state.tabs.reset(&mut com);
 
     if let Some(stereo) = attrib_value!(
         owc.backend.get_attrib(BackendAttrib::Stereo),
         BackendAttribValue::Stereo
     ) {
-        panel
-            .state
-            .tabs
-            .set_tab_visible(&mut common, "stereo", true);
-        panel.state.stereo.reset(&mut common, &stereo);
+        panel.state.tabs.set_tab_visible(&mut com, "stereo", true);
+        panel.state.stereo.reset(&mut com, &stereo);
 
         // Set the checkbox label based on stereo mode
         let translation = get_stereo_full_frame_translation(stereo);
         let c = panel
             .parser_state
             .fetch_component_as::<ComponentCheckbox>("stereo_full_frame_box")?;
-        c.set_text(&mut common, Translation::from_translation_key(translation));
+        c.set_text(&mut com, Translation::from_translation_key(translation));
     } else {
-        panel
-            .state
-            .tabs
-            .set_tab_visible(&mut common, "stereo", false);
+        panel.state.tabs.set_tab_visible(&mut com, "stereo", false);
     }
 
     if let Some(mouse) = attrib_value!(
         owc.backend.get_attrib(BackendAttrib::MouseTransform),
         BackendAttribValue::MouseTransform
     ) {
-        panel.state.tabs.set_tab_visible(&mut common, "mouse", true);
-        panel.state.mouse.reset(&mut common, &mouse);
+        panel.state.tabs.set_tab_visible(&mut com, "mouse", true);
+        panel.state.mouse.reset(&mut com, &mouse);
     } else {
-        panel
-            .state
-            .tabs
-            .set_tab_visible(&mut common, "mouse", false);
+        panel.state.tabs.set_tab_visible(&mut com, "mouse", false);
     }
 
     if let Some(full_frame) = attrib_value!(
@@ -567,7 +663,7 @@ fn reset_panel(
         let c = panel
             .parser_state
             .fetch_component_as::<ComponentCheckbox>("stereo_full_frame_box")?;
-        c.set_checked(&mut common, full_frame);
+        c.set_checked(&mut com, full_frame);
     }
 
     if let Some(adjust_mouse) = attrib_value!(
@@ -577,10 +673,29 @@ fn reset_panel(
         let c = panel
             .parser_state
             .fetch_component_as::<ComponentCheckbox>("stereo_adjust_mouse_box")?;
-        c.set_checked(&mut common, adjust_mouse);
+        c.set_checked(&mut com, adjust_mouse);
     }
 
-    panel.layout.process_alterables(alterables)?;
+    let resizable = attrib_value!(
+        owc.backend.get_attrib(BackendAttrib::Resizable),
+        BackendAttribValue::Resizable
+    )
+    .unwrap_or(false);
+    let c = panel
+        .parser_state
+        .fetch_component_as::<ComponentButton>("resize_corner")?;
+    let common = CallbackDataCommon {
+        state: &panel.layout.state,
+        alterables: &mut panel.layout.alterables,
+    };
+    common.alterables.set_style(
+        c.get_rect(),
+        StyleSetRequest::Display(if resizable {
+            Display::Block
+        } else {
+            Display::None
+        }),
+    );
 
     Ok(())
 }
@@ -674,7 +789,6 @@ fn set_up_slider(
             OverlaySelector::Id(*overlay_id.borrow()),
             Box::new(move |app, owc| callback(app, owc, e_value)),
         )));
-        Ok(())
     }));
 
     Ok(())
@@ -702,4 +816,26 @@ fn set_up_checkbox(
     }));
 
     Ok(())
+}
+
+pub fn resize_centered_from_uv(grab_uv: Vec2, cur_uv: Vec2, cur_extent: [u32; 2]) -> [u32; 2] {
+    const MIN_SIZE: Vec2 = Vec2::new(160.0, 160.0);
+    const CENTER_DEADZONE: f32 = 0.1;
+
+    let cur_extent_v = Vec2::new(cur_extent[0] as f32, cur_extent[1] as f32);
+    let grab_from_center = grab_uv - Vec2::splat(0.5);
+    let cur_from_center = (cur_uv - Vec2::splat(0.5)) * cur_extent_v;
+
+    let mut out = cur_extent_v;
+    if grab_from_center.x.abs() > CENTER_DEADZONE {
+        out.x = (cur_from_center.x / grab_from_center.x).abs();
+    }
+
+    if grab_from_center.y.abs() > CENTER_DEADZONE {
+        out.y = (cur_from_center.y / grab_from_center.y).abs();
+    }
+
+    out = out.max(MIN_SIZE);
+
+    [out.x.round() as u32, out.y.round() as u32]
 }

@@ -2,15 +2,18 @@ use std::{path::PathBuf, rc::Rc};
 
 use chrono::Timelike;
 use glam::Vec2;
+use strum::EnumCount;
 use wgui::{
 	assets::{AssetPath, AssetProvider},
 	components::button::ComponentButton,
+	event::{CallbackDataCommon, StyleSetRequest},
 	font_config::WguiFontConfig,
 	globals::WguiGlobals,
 	i18n::Translation,
-	layout::{Layout, LayoutParams, LayoutUpdateParams, LayoutUpdateResult, WidgetID},
+	layout::{Layout, LayoutParams, LayoutTask, LayoutUpdateParams, LayoutUpdateResult, WidgetID},
 	parser::{Fetchable, ParseDocumentParams, ParserState},
 	renderer_vk::text::custom_glyph::CustomGlyphData,
+	taffy::{self},
 	task::Tasks,
 	theme::WguiTheme,
 	widget::{label::WidgetLabel, rectangle::WidgetRectangle, sprite::WidgetSprite},
@@ -19,16 +22,20 @@ use wgui::{
 use wlx_common::{
 	async_executor::AsyncExecutor,
 	audio,
-	dash_interface::{BoxDashInterface, RecenterMode},
+	dash_interface::{BoxDashInterface, ConfigChangeKind, DashPlayspaceTask},
 	locale::WayVRLangProvider,
+	palette::load_palette,
 	timestep::{self, Timestep},
 };
 
 use crate::{
 	assets,
-	tab::{Tab, TabType, apps::TabApps, games::TabGames, home::TabHome, monado::TabMonado, settings::TabSettings},
+	tab::{
+		Tab, TabType, apps::TabApps, donate::TabDonate, games::TabGames, home::TabHome, monado::TabMonado,
+		settings::TabSettings, welcome::TabWelcome,
+	},
 	util::{
-		popup_manager::{MountPopupParams, PopupManager, PopupManagerParams},
+		popup_manager::{MountPopupOnceParams, PopupManager, PopupManagerParams},
 		toast_manager::ToastManager,
 	},
 	views,
@@ -56,6 +63,7 @@ pub struct Frontend<T> {
 	state: ParserState,
 
 	current_tab: Option<Box<dyn Tab<T>>>,
+	side_buttons: Vec<(TabType, Rc<ComponentButton>)>,
 
 	pub tasks: FrontendTasks,
 
@@ -86,14 +94,17 @@ pub struct FrontendUpdateResult {
 pub struct InitParams<'a, T> {
 	pub interface: BoxDashInterface<T>,
 	pub lang_provider: &'a WayVRLangProvider,
+	pub show_welcome: bool,
 	pub has_monado: bool,
 	pub theme: Rc<WguiTheme>,
+	pub color_palette: &'a str,
 }
 
 #[derive(Clone)]
 pub enum SoundType {
 	Startup,
 	Launch,
+	Save,
 }
 
 #[derive(Clone)]
@@ -101,14 +112,16 @@ pub enum FrontendTask {
 	SetTab(TabType),
 	RefreshClock,
 	RefreshBackground,
-	MountPopup(MountPopupParams),
+	MountPopupOnce(MountPopupOnceParams),
 	RefreshPopupManager,
 	ShowAudioSettings,
 	UpdateAudioSettingsView,
 	RecenterPlayspace,
 	PushToast(Translation),
 	PlaySound(SoundType),
+	OpenURL(Rc<str>),
 	HideDashboard,
+	MarkTutorialGraduated,
 }
 
 impl<T: 'static> Frontend<T> {
@@ -118,6 +131,8 @@ impl<T: 'static> Frontend<T> {
 		let font_binary_bold = assets.load_from_path_gzip("Quicksand-Bold.ttf.gz")?;
 		let font_binary_regular = assets.load_from_path_gzip("Quicksand-Regular.ttf.gz")?;
 		let font_binary_light = assets.load_from_path_gzip("Quicksand-Light.ttf.gz")?;
+
+		let palette = load_palette(params.color_palette);
 
 		let globals = WguiGlobals::new(
 			assets,
@@ -129,6 +144,7 @@ impl<T: 'static> Frontend<T> {
 				family_name_monospace: "",
 			},
 			PathBuf::new(), //FIXME: pass from somewhere else
+			palette,
 		)?;
 
 		let (layout, state) = wgui::parser::new_layout_from_assets(
@@ -151,7 +167,13 @@ impl<T: 'static> Frontend<T> {
 		let toast_manager = ToastManager::new();
 
 		let tasks = FrontendTasks::new();
-		tasks.push(FrontendTask::SetTab(TabType::Home));
+
+		let init_tab = if params.show_welcome {
+			TabType::Welcome
+		} else {
+			TabType::Home
+		};
+		tasks.push(FrontendTask::SetTab(init_tab));
 
 		let id_label_time = state.get_widget_id("label_time")?;
 		let id_rect_content = state.get_widget_id("rect_content")?;
@@ -164,6 +186,7 @@ impl<T: 'static> Frontend<T> {
 			layout,
 			state,
 			current_tab: None,
+			side_buttons: Vec::with_capacity(TabType::COUNT),
 			globals,
 			tasks,
 			ticks: 0,
@@ -202,6 +225,7 @@ impl<T: 'static> Frontend<T> {
 		let path = match sound_type {
 			SoundType::Startup => "sound/startup.mp3",
 			SoundType::Launch => "sound/app_start.mp3",
+			SoundType::Save => "sound/save.mp3",
 		};
 
 		// try loading a custom sound; if one doesn't exist (or it failed to load), use the built-in asset
@@ -279,10 +303,8 @@ impl<T: 'static> Frontend<T> {
 	}
 
 	fn update_time(&mut self, data: &mut T) -> anyhow::Result<()> {
-		let mut c = self.layout.start_common();
-		let mut common = c.common();
-
 		{
+			let mut common = self.layout.common();
 			let mut label = common
 				.state
 				.widgets
@@ -303,27 +325,20 @@ impl<T: 'static> Frontend<T> {
 			label.set_text(&mut common, Translation::from_raw_text(&text));
 		}
 
-		c.finish()?;
 		Ok(())
 	}
 
-	fn mount_popup(&mut self, params: MountPopupParams, data: &mut T) -> anyhow::Result<()> {
+	fn mount_popup_once(&mut self, params: MountPopupOnceParams, data: &mut T) -> anyhow::Result<()> {
 		let config = self.interface.general_config(data);
 
-		self.popup_manager.mount_popup(
-			self.globals.clone(),
-			&mut self.layout,
-			self.tasks.clone(),
-			params,
-			config,
-		)?;
+		self
+			.popup_manager
+			.mount_popup_once(&self.globals, &mut self.layout, &self.tasks, params, config)?;
 		Ok(())
 	}
 
 	fn refresh_popup_manager(&mut self) -> anyhow::Result<()> {
-		let mut c = self.layout.start_common();
-		self.popup_manager.refresh(c.common().alterables);
-		c.finish()?;
+		self.popup_manager.refresh(&mut self.layout.alterables);
 		Ok(())
 	}
 
@@ -345,8 +360,8 @@ impl<T: 'static> Frontend<T> {
 			(0.8666, 0.9333)
 		};
 
-		rect.params.color.a = alpha1;
-		rect.params.color2.a = alpha2;
+		rect.params.color = rect.params.color.with_alpha(alpha1);
+		rect.params.color2 = rect.params.color2.with_alpha(alpha2);
 
 		Ok(())
 	}
@@ -356,7 +371,7 @@ impl<T: 'static> Frontend<T> {
 			FrontendTask::SetTab(tab_type) => self.set_tab(params.data, tab_type)?,
 			FrontendTask::RefreshClock => self.update_time(params.data)?,
 			FrontendTask::RefreshBackground => self.update_background(params.data)?,
-			FrontendTask::MountPopup(popup_params) => self.mount_popup(popup_params, params.data)?,
+			FrontendTask::MountPopupOnce(popup_params) => self.mount_popup_once(popup_params, params.data)?,
 			FrontendTask::RefreshPopupManager => self.refresh_popup_manager()?,
 			FrontendTask::ShowAudioSettings => self.action_show_audio_settings()?,
 			FrontendTask::UpdateAudioSettingsView => self.action_update_audio_settings()?,
@@ -364,13 +379,14 @@ impl<T: 'static> Frontend<T> {
 			FrontendTask::PushToast(content) => self.toast_manager.push(content),
 			FrontendTask::PlaySound(sound_type) => self.queue_play_sound(sound_type),
 			FrontendTask::HideDashboard => self.action_hide_dashboard(params.data),
+			FrontendTask::OpenURL(url) => self.action_open_url(url),
+			FrontendTask::MarkTutorialGraduated => self.action_tutorial_graduated(params.data),
 		};
 		Ok(())
 	}
 
 	fn set_tab_title(&mut self, translation: &str, icon: &str) -> anyhow::Result<()> {
-		let mut c = self.layout.start_common();
-		let mut common = c.common();
+		let mut common = self.layout.common();
 
 		{
 			let mut label = common
@@ -386,12 +402,11 @@ impl<T: 'static> Frontend<T> {
 				.widgets
 				.cast_as::<WidgetSprite>(self.widgets.id_sprite_titlebar_icon)?;
 			sprite.set_content(
-				&mut common,
+				common.alterables,
 				Some(CustomGlyphData::from_assets(&self.globals, AssetPath::BuiltIn(icon))?),
 			);
 		}
 
-		c.finish()?;
 		Ok(())
 	}
 
@@ -400,25 +415,44 @@ impl<T: 'static> Frontend<T> {
 		let widget_content = self.state.fetch_widget(&self.layout.state, "content")?;
 		self.layout.remove_children(widget_content.id);
 
+		let padding = tab_type.get_preferred_padding();
+		self.layout.tasks.push(LayoutTask::SetWidgetStyle(
+			widget_content.id,
+			StyleSetRequest::Padding(taffy::Rect::length(padding)),
+		));
+
 		let (tab_translation, icon_path) = match tab_type {
+			TabType::Welcome => ("GETTING_STARTED", "dashboard/welcome.svg"),
 			TabType::Home => ("HOME_SCREEN", "dashboard/home.svg"),
 			TabType::Apps => ("APPLICATIONS", "dashboard/apps.svg"),
 			TabType::Games => ("GAMES", "dashboard/games.svg"),
 			TabType::Monado => ("MONADO_RUNTIME", "dashboard/monado.svg"),
 			TabType::Settings => ("SETTINGS", "dashboard/settings.svg"),
+			TabType::Donate => ("DONATE.SUPPORT_US", "dashboard/opencollective.svg"),
 		};
 
 		self.set_tab_title(tab_translation, icon_path)?;
 
 		let tab: Box<dyn Tab<T>> = match tab_type {
+			TabType::Welcome => Box::new(TabWelcome::new(self, widget_content.id, data)?),
 			TabType::Home => Box::new(TabHome::new(self, widget_content.id, data)?),
 			TabType::Apps => Box::new(TabApps::new(self, widget_content.id, data)?),
 			TabType::Games => Box::new(TabGames::new(self, widget_content.id)?),
 			TabType::Monado => Box::new(TabMonado::new(self, widget_content.id)?),
 			TabType::Settings => Box::new(TabSettings::new(self, widget_content.id, data)?),
+			TabType::Donate => Box::new(TabDonate::new(self, widget_content.id, data)?),
 		};
 
 		self.current_tab = Some(tab);
+
+		let mut common = CallbackDataCommon {
+			state: &self.layout.state,
+			alterables: &mut self.layout.alterables,
+		};
+
+		for (t, btn) in self.side_buttons.iter() {
+			btn.set_sticky_state(&mut common, tab_type == *t);
+		}
 
 		Ok(())
 	}
@@ -435,34 +469,29 @@ impl<T: 'static> Frontend<T> {
 		// ################################
 
 		// "Home" side button
-		self.tasks.handle_button(
-			&self.state.fetch_component_as::<ComponentButton>("btn_side_home")?,
-			FrontendTask::SetTab(TabType::Home),
-		);
+		let btn = self.state.fetch_component_as::<ComponentButton>("btn_side_home")?;
+		self.tasks.handle_button(&btn, FrontendTask::SetTab(TabType::Home));
+		self.side_buttons.push((TabType::Home, btn));
 
 		// "Apps" side button
-		self.tasks.handle_button(
-			&self.state.fetch_component_as::<ComponentButton>("btn_side_apps")?,
-			FrontendTask::SetTab(TabType::Apps),
-		);
+		let btn = self.state.fetch_component_as::<ComponentButton>("btn_side_apps")?;
+		self.tasks.handle_button(&btn, FrontendTask::SetTab(TabType::Apps));
+		self.side_buttons.push((TabType::Apps, btn));
 
 		// "Games" side button
-		self.tasks.handle_button(
-			&self.state.fetch_component_as::<ComponentButton>("btn_side_games")?,
-			FrontendTask::SetTab(TabType::Games),
-		);
+		let btn = self.state.fetch_component_as::<ComponentButton>("btn_side_games")?;
+		self.tasks.handle_button(&btn, FrontendTask::SetTab(TabType::Games));
+		self.side_buttons.push((TabType::Games, btn));
 
 		// "Monado side button"
-		self.tasks.handle_button(
-			&self.state.fetch_component_as::<ComponentButton>("btn_side_monado")?,
-			FrontendTask::SetTab(TabType::Monado),
-		);
+		let btn = self.state.fetch_component_as::<ComponentButton>("btn_side_monado")?;
+		self.tasks.handle_button(&btn, FrontendTask::SetTab(TabType::Monado));
+		self.side_buttons.push((TabType::Monado, btn));
 
 		// "Settings" side button
-		self.tasks.handle_button(
-			&self.state.fetch_component_as::<ComponentButton>("btn_side_settings")?,
-			FrontendTask::SetTab(TabType::Settings),
-		);
+		let btn = self.state.fetch_component_as::<ComponentButton>("btn_side_settings")?;
+		self.tasks.handle_button(&btn, FrontendTask::SetTab(TabType::Settings));
+		self.side_buttons.push((TabType::Settings, btn));
 
 		// ################################
 		// BOTTOM BAR BUTTONS
@@ -485,7 +514,6 @@ impl<T: 'static> Frontend<T> {
 
 	fn action_show_audio_settings(&mut self) -> anyhow::Result<()> {
 		self.window_audio_settings.open(&mut WguiWindowParams {
-			globals: &self.globals,
 			position: Vec2::new(64.0, 64.0),
 			layout: &mut self.layout,
 			extra: WguiWindowParamsExtra {
@@ -525,11 +553,27 @@ impl<T: 'static> Frontend<T> {
 	}
 
 	fn action_recenter_playspace(&mut self, data: &mut T) -> anyhow::Result<()> {
-		self.interface.recenter_playspace(data, RecenterMode::Recenter)?;
+		self.interface.playspace_task(data, DashPlayspaceTask::Recenter)?;
 		Ok(())
 	}
 
 	fn action_hide_dashboard(&mut self, data: &mut T) {
 		self.interface.toggle_dashboard(data);
+	}
+
+	fn action_tutorial_graduated(&mut self, data: &mut T) {
+		let config = self.interface.general_config(data);
+		config.tutorial_graduated = true;
+		self.interface.config_changed(data, ConfigChangeKind::Other);
+	}
+
+	fn action_open_url(&mut self, url: Rc<str>) {
+		let _ = std::process::Command::new("xdg-open").arg(url.as_ref()).spawn();
+		self
+			.tasks
+			.push(FrontendTask::PushToast(Translation::from_raw_text_string(format!(
+				"Opened URL: {}",
+				url
+			))));
 	}
 }

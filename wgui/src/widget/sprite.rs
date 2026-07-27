@@ -4,8 +4,9 @@ use cosmic_text::{Attrs, Buffer, Color, Shaping, Weight};
 use slotmap::Key;
 
 use crate::{
+	color::{ParentColor, WguiColor},
 	drawing::{self, PrimitiveExtent},
-	event::CallbackDataCommon,
+	event::{CallbackDataCommon, EventAlterables},
 	globals::Globals,
 	layout::WidgetID,
 	renderer_vk::text::{
@@ -20,8 +21,11 @@ use super::{WidgetObj, WidgetState};
 #[derive(Debug, Default)]
 pub struct WidgetSpriteParams {
 	pub glyph_data: Option<CustomGlyphData>,
-	pub color: Option<drawing::Color>,
+	pub color: Option<WguiColor>,
+	pub parent_color: ParentColor,
 }
+
+const DEFAULT_COLOR: WguiColor = WguiColor::Raw(drawing::Color::from_hex("#ffffff").unwrap());
 
 #[derive(Debug, Default)]
 pub struct WidgetSprite {
@@ -40,26 +44,30 @@ impl WidgetSprite {
 		)
 	}
 
-	pub fn set_color(&mut self, common: &mut CallbackDataCommon, color: drawing::Color) {
+	pub fn set_color(&mut self, common: &mut CallbackDataCommon, color: WguiColor) {
 		self.params.color = Some(color);
 		common.mark_widget_dirty(self.id);
 	}
 
-	pub const fn get_color(&self) -> Option<drawing::Color> {
-		self.params.color
+	pub fn get_color(&self) -> WguiColor {
+		self.params.color.unwrap_or(DEFAULT_COLOR)
 	}
 
-	pub fn set_content(&mut self, common: &mut CallbackDataCommon, content: Option<CustomGlyphData>) {
+	pub fn set_content(&mut self, alterables: &mut EventAlterables, content: Option<CustomGlyphData>) {
 		if self.params.glyph_data == content {
 			return;
 		}
 
 		self.params.glyph_data = content;
-		common.mark_widget_dirty(self.id);
+		alterables.mark_dirty_and_redraw(self.id);
 	}
 
 	pub fn get_content(&self) -> Option<CustomGlyphData> {
 		self.params.glyph_data.clone()
+	}
+
+	pub fn parent_color(&self) -> ParentColor {
+		self.params.parent_color
 	}
 }
 
@@ -78,7 +86,9 @@ impl WidgetObj for WidgetSprite {
 					self
 						.params
 						.color
-						.map_or(cosmic_text::Color::rgb(255, 255, 255), Into::into),
+						.unwrap_or(DEFAULT_COLOR)
+						.resolve(&state.globals.palette)
+						.into(),
 				),
 				snap_to_physical_pixel: true,
 			};
@@ -135,7 +145,7 @@ impl WidgetObj for WidgetSprite {
 		super::WidgetType::Sprite
 	}
 
-	fn debug_print(&self) -> String {
+	fn debug_print(&self, _globals: &Globals) -> String {
 		String::default()
 	}
 }

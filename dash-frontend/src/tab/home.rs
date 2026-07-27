@@ -59,22 +59,29 @@ impl<T> TabHome<T> {
 			parent_id,
 		)?;
 
-		let mut c = frontend.layout.start_common();
-		let widget_label = state.fetch_widget(&c.layout.state, "label_hello")?.widget;
-		configure_label_hello(&mut c.common(), widget_label, frontend.interface.general_config(data));
+		let widget_label = state.fetch_widget(&frontend.layout.state, "label_hello")?.widget;
+		configure_label_hello(
+			&mut frontend.layout.common(),
+			widget_label,
+			frontend.interface.general_config(data),
+		);
 
 		let btn_apps = state.fetch_component_as::<ComponentButton>("btn_apps")?;
 		let btn_games = state.fetch_component_as::<ComponentButton>("btn_games")?;
 		let btn_monado = state.fetch_component_as::<ComponentButton>("btn_monado")?;
-		//let btn_processes = state.fetch_component_as::<ComponentButton>("btn_processes")?;
 		let btn_settings = state.fetch_component_as::<ComponentButton>("btn_settings")?;
+		let btn_welcome_screen = state.fetch_component_as::<ComponentButton>("btn_welcome_screen")?;
+		let btn_donate = state.fetch_component_as::<ComponentButton>("btn_donate")?;
+		let btn_website = state.fetch_component_as::<ComponentButton>("btn_website")?;
 
 		let tasks = &mut frontend.tasks;
 		tasks.handle_button(&btn_apps, FrontendTask::SetTab(TabType::Apps));
 		tasks.handle_button(&btn_games, FrontendTask::SetTab(TabType::Games));
 		tasks.handle_button(&btn_monado, FrontendTask::SetTab(TabType::Monado));
-		//tasks.handle_button(&btn_processes, FrontendTask::SetTab(TabType::Processes));
 		tasks.handle_button(&btn_settings, FrontendTask::SetTab(TabType::Settings));
+		tasks.handle_button(&btn_welcome_screen, FrontendTask::SetTab(TabType::Welcome));
+		tasks.handle_button(&btn_donate, FrontendTask::SetTab(TabType::Donate));
+		tasks.handle_button(&btn_website, FrontendTask::OpenURL("https://wayvr.org".into()));
 
 		Ok(Self {
 			state,
