@@ -1,5 +1,5 @@
 use std::{rc::Rc, time::Duration};
-
+use std::collections::HashMap;
 use crate::{
     app_misc,
     gui::{
@@ -13,6 +13,7 @@ use crate::{
 };
 use anyhow::{bail, Context};
 use glam::{FloatExt, Mat4, Vec2, vec2, vec3};
+use slotmap::Key;
 use smallvec::{SmallVec, smallvec};
 use wgui::{
     animation::{Animation, AnimationEasing},
@@ -30,11 +31,10 @@ use wgui::{
         sprite::WidgetSprite,
     },
 };
-
-use super::{
-    KeyButtonData, KeyState, KeyboardState, handle_press, handle_release,
-    layout::{self, KeyCapType},
-};
+use wgui::event::StyleSetRequest;
+use wgui::layout::LayoutTask;
+use wgui::taffy::Display;
+use super::{KeyButtonData, KeyState, KeyboardState, handle_press, handle_release, layout::{self, KeyCapType}, handle_mouse_motion, init_swipe_type_manager};
 
 const PIXELS_PER_UNIT: f32 = 60.;
 
@@ -52,10 +52,7 @@ pub(super) fn update_swipe_prediction_bar(
 ) -> anyhow::Result<bool> {
     let mut elements_changed = false;
 
-    let (accent_color, anim_mult) = {
-        let theme = &app.wgui_theme;
-        (theme.accent_color, theme.animation_mult)
-    };
+    let anim_mult = app.wgui_theme.animation_mult;
 
     if let Some(recv) = panel.state.swipe_candidate_receiver.as_mut()
     && let Ok(candidates) = recv.try_recv() {
@@ -93,7 +90,7 @@ pub(super) fn update_swipe_prediction_bar(
                 "KeyPrediction",
                 &mut panel.layout,
                 predictions_root,
-                params
+                TemplateParams::from_hashmap(params)
             )?;
 
             if let Ok(widget_id) = panel.parser_state.get_widget_id(&id) {
@@ -117,6 +114,8 @@ pub(super) fn update_swipe_prediction_bar(
                         cur_border_color: rect.params.border_color.into(),
                         border: rect.params.border,
                         drawn_state: false.into(),
+                        labels: Default::default(),
+                        sprites: Default::default(),
                     })
                 };
                 panel.add_event_listener(
@@ -144,7 +143,6 @@ pub(super) fn update_swipe_prediction_bar(
                                 k.clone(),
                                 common,
                                 data,
-                                accent_color,
                                 anim_mult,
                                 0.0,
                             );
@@ -162,7 +160,6 @@ pub(super) fn update_swipe_prediction_bar(
                                 k.clone(),
                                 common,
                                 data,
-                                accent_color,
                                 anim_mult,
                                 0.0,
                             );
@@ -256,7 +253,7 @@ pub(super) fn create_keyboard_panel(
             params.insert_rc("width", key_width.to_string().into());
             params.insert_rc("height", key_height.to_string().into());
 
-            let mut label = key.label.into_iter();
+            let mut label = key.label.clone().into_iter();
             label
                 .next()
                 .and_then(|s| params.insert_rc("text", s.into()));

@@ -18,7 +18,6 @@ use smithay::{
     reexports::wayland_server::{self, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, SerialCounter},
 };
-use smithay::input::Seat;
 use smithay::wayland::selection::data_device::set_data_device_selection;
 use wgui::log::LogErr;
 use xkbcommon::xkb;
@@ -40,7 +39,6 @@ pub struct WayVRCompositor {
     pub state: comp::Application,
     pub seat_keyboard: KeyboardHandle<comp::Application>,
     pub seat_pointer: PointerHandle<comp::Application>,
-    pub seat: Seat<comp::Application>,
     pub serial_counter: SerialCounter,
     pub wayland_env: super::WaylandEnv,
 
@@ -98,7 +96,6 @@ impl WayVRCompositor {
         display: wayland_server::Display<comp::Application>,
         seat_keyboard: KeyboardHandle<comp::Application>,
         seat_pointer: PointerHandle<comp::Application>,
-        seat: Seat<comp::Application>,
     ) -> anyhow::Result<Self> {
         let (wayland_env, listener) = create_wayland_listener()?;
 
@@ -122,7 +119,6 @@ impl WayVRCompositor {
             serial_counter: SerialCounter::new(),
             clients: Vec::new(),
             toplevel_surf_count: 0,
-            seat,
             scroll_accumulator: [0.0, 0.0],
         })
     }
@@ -267,7 +263,7 @@ impl WayVRCompositor {
     pub fn set_clipboard_text(&mut self, text: String) {
         set_data_device_selection::<Application>(
             &self.state.display_handle,
-            &self.seat,
+            &self.state.seat,
             vec!["text/plain;charset=utf-8".to_string(), "text/plain".to_string()],
             text.as_bytes().into(),
         );

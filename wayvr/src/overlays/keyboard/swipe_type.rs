@@ -10,7 +10,8 @@ use std::time::Instant;
 use super_swipe_type::keyboard_manager::QwertyKeyboardGrid;
 use super_swipe_type::swipe_orchestrator::SwipeOrchestrator;
 use super_swipe_type::{SwipePoint};
-use crate::subsystem::input::KeyboardFocus;
+use wgui::event::DeviceBitmask;
+use crate::subsystem::input::InputFocus;
 
 const PREDICTION_SUGGESTION_COUNT: usize = 5;
 
@@ -32,7 +33,7 @@ pub struct SwipeTypingManager {
     clipboard: Clipboard,
     swipe_left_first_key: bool,
     first_swipe_char: char,
-    current_swipe_device: Option<usize>,
+    current_swipe_device: Option<DeviceBitmask>,
     last_swiped_word: Option<String>,
 }
 
@@ -46,13 +47,13 @@ impl SwipeTypingManager {
         self.last_swiped_word = Some(word.clone());
         let text_to_paste = format!("{word} ");
 
-        match app.hid_provider.keyboard_focus {
-            KeyboardFocus::PhysicalScreen => {
+        match app.hid_provider.get_input_focus() {
+             InputFocus::PhysicalScreen => {
                 if let Ok(_) = self.clipboard.set_text(text_to_paste) {
                     Self::paste(app, original_keyboard_mods);
                 }
             },
-            KeyboardFocus::WayVR => {
+            InputFocus::WayVR => {
                 if let Some(wvr_server) = app.wvr_server.as_mut() {
                     wvr_server.set_clipboard_text(text_to_paste);
                     Self::paste(app, original_keyboard_mods);
@@ -171,7 +172,7 @@ impl SwipeTypingManager {
         self.current_swipe_device = None;
     }
 
-    fn start_swipe(&mut self, key_label: char, device: usize) -> Instant {
+    fn start_swipe(&mut self, key_label: char, device: DeviceBitmask) -> Instant {
         let now = Instant::now();
         self.swipe_start_time = Some(now);
         self.first_swipe_char = key_label.to_ascii_lowercase();
@@ -187,7 +188,7 @@ impl SwipeTypingManager {
         self.current_swipe.is_empty()
     }
 
-    pub fn add_swipe(&mut self, within_key_pos_normalized: &Vec2, key_label: char, device: usize) {
+    pub fn add_swipe(&mut self, within_key_pos_normalized: &Vec2, key_label: char, device: DeviceBitmask) {
         if let Some(pos) = self.keyboard_gird.key_positions.get(&key_label.to_ascii_lowercase()) {
             if let Some(current_device) = self.current_swipe_device {
                 if current_device != device {

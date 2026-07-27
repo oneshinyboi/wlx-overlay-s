@@ -30,14 +30,13 @@ use anyhow::Context;
 use glam::{Affine3A, Quat, Vec3, vec3, Vec2};
 use regex::Regex;
 use slotmap::{SlotMap, new_key_type, Key};
-use slotmap::{SlotMap, new_key_type};
 use smallvec::SmallVec;
 use wgui::{
     color::WguiColor,
     event::{InternalStateChangeEvent, MouseButtonEvent, MouseButtonIndex},
     layout::WidgetID,
 };
-use wgui::event::StyleSetRequest;
+use wgui::event::{DeviceBitmask, StyleSetRequest};
 use wgui::layout::{LayoutTask};
 use wgui::parser::Fetchable;
 use wgui::taffy::Display;
@@ -124,7 +123,7 @@ pub fn create_keyboard(app: &mut AppState, wayland: bool) -> anyhow::Result<Over
             transform: Affine3A::from_scale_rotation_translation(
                 Vec3::ONE * width,
                 Quat::from_rotation_x(-10f32.to_radians()),
-                vec3(0.0, -0.69, -0.5),
+                vec3(0.0, -0.65, -0.5),
             ),
             ..OverlayWindowState::default()
         },
@@ -206,7 +205,6 @@ impl KeyboardBackend {
         }
         Ok(id)
     }
-
 
     fn switch_keymap(&mut self, keymap: &XkbKeymap, app: &mut AppState) -> anyhow::Result<bool> {
         if !self.wlx_layout.auto_labels.unwrap_or(true) {
@@ -470,7 +468,7 @@ fn handle_mouse_motion(
     key_cap_type: &KeyCapType,
     keyboard: &mut KeyboardState,
     within_key_pos: &Option<Vec2>,
-    device: usize
+    device: DeviceBitmask
 ) {
     if let Some(swipe_manager) = keyboard.swipe_typing_manager.as_mut()
         && matches!(*key_cap_type, KeyCapType::Letter | KeyCapType::LetterAltGr)
@@ -502,7 +500,7 @@ fn handle_press(
     within_key_pos: &Option<Vec2>,
     keyboard: &mut KeyboardState,
     button: MouseButtonEvent,
-    device: usize
+    device: DeviceBitmask
 ) {
     match &key.button_state {
         KeyButtonData::Key { vk, pressed } => {
