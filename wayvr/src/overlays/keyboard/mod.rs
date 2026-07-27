@@ -481,7 +481,7 @@ fn handle_mouse_motion(
                         if pos.x >= 0.0 && pos.x <= 1.0 && pos.y >= 0.0 && pos.y <= 1.0 {
 
                             if let Some(label) = key_label.first() {
-                                swipe_manager.add_swipe(pos, label.chars().next().unwrap_or_default(), device);
+                                swipe_manager.add_swipe(pos, label.chars().next().unwrap_or_default(), device, None);
                             }
                         }
                     }
@@ -509,7 +509,7 @@ fn handle_press(
             {
                 if let Some(pos) = within_key_pos {
                     if let Some(label) = key_label.first() {
-                        swipe_manager.add_swipe(pos, label.chars().next().unwrap_or_default(), device);
+                        swipe_manager.add_swipe(pos, label.chars().next().unwrap_or_default(), device, Some(button.index));
                     }
                 }
             }
@@ -570,6 +570,11 @@ fn handle_release(app: &mut AppState, key: &KeyState, k_cap_type: &KeyCapType, k
                     }
                 }
                 else { // pointer must have been released on the same key it was pressed on
+                    keyboard.modifiers |= match swipe_manager.current_swipe_mouse_button_index() {
+                        Some(MouseButtonIndex::Right) => SHIFT,
+                        Some(MouseButtonIndex::Middle) => keyboard.alt_modifier,
+                        _ => 0,
+                    };
                     swipe_manager.reset(); // drop swipe tracking that was started on press
 
                     app.hid_provider
