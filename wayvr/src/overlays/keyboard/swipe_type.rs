@@ -1,7 +1,6 @@
 use crate::state::AppState;
 use crate::subsystem::hid::{KeyModifier, VirtualKey, CTRL};
 use anyhow::{bail};
-use arboard::Clipboard;
 use glam::Vec2;
 use std::mem;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, channel, Sender};
@@ -11,6 +10,9 @@ use super_swipe_type::keyboard_manager::QwertyKeyboardGrid;
 use super_swipe_type::swipe_orchestrator::SwipeOrchestrator;
 use super_swipe_type::{SwipePoint};
 use wgui::event::{DeviceBitmask, MouseButtonIndex};
+use wgui::log::LogErr;
+use crate::subsystem::clipboard;
+use crate::subsystem::clipboard::ClipboardProvider;
 use crate::subsystem::input::InputFocus;
 
 const PREDICTION_SUGGESTION_COUNT: usize = 5;
@@ -22,7 +24,6 @@ enum PredictionTask {
     },
     Shutdown,
 }
-
 pub struct SwipeTypingManager {
     keyboard_gird: QwertyKeyboardGrid,
     current_swipe: Vec<SwipePoint>,
@@ -30,7 +31,7 @@ pub struct SwipeTypingManager {
     prediction_task_sender: Sender<PredictionTask>,
     worker_thread: Option<JoinHandle<()>>,
     swipe_start_time: Option<Instant>,
-    clipboard: Clipboard,
+    clipboard: Option<Box<dyn ClipboardProvider>>,
     swipe_left_first_key: bool,
     first_swipe_char: char,
     current_swipe_device: Option<DeviceBitmask>,
@@ -50,7 +51,8 @@ impl SwipeTypingManager {
 
         match app.hid_provider.get_input_focus() {
              InputFocus::PhysicalScreen => {
-                if let Ok(_) = self.clipboard.set_text(text_to_paste) {
+                if let Some(clipboard) = self.clipboard.as_mut() {
+                    clipboard.set_clipboard_utf8(&*text_to_paste);
                     Self::paste(app, original_keyboard_mods);
                 }
             },
@@ -122,7 +124,27 @@ impl SwipeTypingManager {
                 }
             }
         });
+        let clipboard_provider: Option<Box<dyn ClipboardProvider>> = {
+            #[cfg(feature = "wayland")]
+            {
+                clipboard::wl::Provider::new()
+                    .log_err("Could not create Wayland clipboard provider")
+                    .ok()
+                    .map(|p| Box::new(p) as Box<dyn ClipboardProvider>);
+            }
+            #[cfg(feature = "x11")]
+            {
+                clipboard::x11::Provider::new()
+                    .log_err("Could not create X11 clipboard provider")
+                    .ok()
+                    .map(|p| Box::new(p) as Box<dyn ClipboardProvider>)
+            }
+            #[cfg(not(any(feature = "wayland", feature = "x11")))]
+            {
+                None
+            }
 
+        };
         Ok((
             Self {
                 keyboard_gird: QwertyKeyboardGrid::new(),
@@ -131,7 +153,7 @@ impl SwipeTypingManager {
                 prediction_task_sender: task_sender,
                 worker_thread: Some(worker_thread),
                 swipe_start_time: None,
-                clipboard: Clipboard::new()?,
+                clipboard: clipboard_provider,
                 swipe_left_first_key: false,
                 first_swipe_char: char::default(),
                 current_swipe_device: None,

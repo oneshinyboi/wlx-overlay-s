@@ -6,3 +6,4 @@ pub mod x11;
 pub trait ClipboardProvider {
     fn set_clipboard_utf8(&mut self, content: &str);
 }
+

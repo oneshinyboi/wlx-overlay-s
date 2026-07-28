@@ -51,6 +51,8 @@ use crate::overlays::keyboard::swipe_type::SwipeTypingManager;
 
 pub mod builder;
 mod layout;
+
+#[cfg(feature = "swipe-to-type ")]
 mod swipe_type;
 
 pub const KEYBOARD_NAME: &str = "kbd";
@@ -123,7 +125,7 @@ pub fn create_keyboard(app: &mut AppState, wayland: bool) -> anyhow::Result<Over
             transform: Affine3A::from_scale_rotation_translation(
                 Vec3::ONE * width,
                 Quat::from_rotation_x(-10f32.to_radians()),
-                vec3(0.0, -0.65, -0.5),
+                vec3(0.0, -0.69, -0.5),
             ),
             ..OverlayWindowState::default()
         },
@@ -187,9 +189,9 @@ impl KeyboardBackend {
 
         if app.session.config.keyboard_swipe_to_type_enabled {
             init_swipe_type_manager(&mut state);
+            log::info!("swipe engine created");
         }
 
-        log::info!("swipe engine created");
         let mut panel =
             create_keyboard_panel(app, keymap, state, &self.wlx_layout)?;
 
@@ -578,10 +580,18 @@ fn handle_release(app: &mut AppState, key: &KeyState, k_cap_type: &KeyCapType, k
                     swipe_manager.reset(); // drop swipe tracking that was started on press
 
                     app.hid_provider
+                        .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
+                    app.hid_provider
                         .send_key_routed(app.wvr_server.as_mut(), *vk, true);
                     pressed.set(true);
                     app.hid_provider
                         .send_key_routed(app.wvr_server.as_mut(), *vk, false);
+
+                    for m in &AUTO_RELEASE_MODS {
+                        if keyboard.modifiers & *m != 0 {
+                            keyboard.modifiers &= !*m;
+                        }
+                    }
                     play_key_click(app);
                 }
             }
