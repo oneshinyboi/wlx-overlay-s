@@ -50,6 +50,7 @@ pub struct InterfaceFeats {
 	pub openxr: bool,
 	pub monado: bool,
 	pub whisper: bool,
+	pub swipe_to_type: bool,
 }
 
 pub trait DashInterface<T> {

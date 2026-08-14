@@ -238,6 +238,7 @@ impl DashInterface<()> for DashInterfaceEmulated {
 			openxr: true,
 			monado: true,
 			whisper: true,
+			swipe_to_type: true,
 		}
 	}
 

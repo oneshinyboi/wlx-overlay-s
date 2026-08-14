@@ -21,6 +21,10 @@ use crate::{
 	},
 	util::{
 		popup_manager::PopupHolder,
+		swipe_type::{
+			SWIPE_TYPE_MODELS, SwipeTypeModel, swipe_type_all_models_downloaded,
+			swipe_type_delete_all_models, swipe_type_model_path,
+		},
 		whisper::{
 			WHISPER_MODELS, WhisperModel, whisper_any_models_downloaded, whisper_delete_all_models, whisper_model_from_name,
 			whisper_model_path,
@@ -35,6 +39,10 @@ enum Task {
 	WhisperRemoveUnused,
 	WhisperDownload(&'static WhisperModel),
 	WhisperDownloadDone,
+	SwipeTypeDownloadClosed,
+	SwipeTypeRemoveAll,
+	SwipeTypeDownloadAll,
+	SwipeTypeDownloadDone,
 	CloseDialog,
 	ReloadTab,
 }
@@ -46,7 +54,8 @@ pub struct State {
 	globals: WguiGlobals,
 	tasks: Tasks<Task>,
 	parent_tasks: Tasks<ParentTask>,
-	pending_download: Option<&'static WhisperModel>,
+	pending_whisper_download: Option<&'static WhisperModel>,
+	pending_swipe_download: Option<&'static [SwipeTypeModel]>,
 }
 
 impl SettingsTab for State {
@@ -57,7 +66,7 @@ impl SettingsTab for State {
 		for task in self.tasks.drain() {
 			match task {
 				Task::WhisperDownloadClosed => {
-					if let Some(model) = self.pending_download.take() {
+					if let Some(model) = self.pending_whisper_download.take() {
 						if !whisper_model_path(model.file_name).exists() {
 							// download failed, set to selection to none
 							par.general_config.whisper_model = "".into();
@@ -71,15 +80,37 @@ impl SettingsTab for State {
 					let _ = whisper_delete_all_models().log_err("could not remove whisper models");
 				}
 				Task::WhisperDownload(model) => {
-					self.pending_download = Some(model);
+					self.pending_whisper_download = Some(model);
 					self.show_whisper_download_dialog(model, par.executor.clone());
 				}
 				Task::WhisperDownloadDone => {
-					if let Some(model) = self.pending_download.take() {
+					if let Some(model) = self.pending_whisper_download.take() {
 						par.general_config.whisper_model = model.file_name.into();
 						par.config_change_kind.replace(ConfigChangeKind::Other);
 
 						// reload tab so that the downloaded checkmarks get populated
+						self.parent_tasks.push(ParentTask::SetTab(TabNameEnum::Features));
+					}
+				}
+				Task::SwipeTypeDownloadClosed => {
+					self.pending_swipe_download = None;
+					if !swipe_type_all_models_downloaded().unwrap_or_default() {
+						par.general_config.swipe_type_models_downloaded = false;
+						par.config_change_kind.replace(ConfigChangeKind::Other);
+						self.parent_tasks.push(ParentTask::SetTab(TabNameEnum::Features));
+					}
+				}
+				Task::SwipeTypeRemoveAll => {
+					let _ = swipe_type_delete_all_models().log_err("could not remove swipe type models");
+				}
+				Task::SwipeTypeDownloadAll => {
+					self.pending_swipe_download = Some(SWIPE_TYPE_MODELS);
+					self.show_swipe_type_download_dialog(SWIPE_TYPE_MODELS, par.executor.clone());
+				}
+				Task::SwipeTypeDownloadDone => {
+					if let Some(_) = self.pending_swipe_download.take() {
+						par.general_config.swipe_type_models_downloaded = true;
+						par.config_change_kind.replace(ConfigChangeKind::Other);
 						self.parent_tasks.push(ParentTask::SetTab(TabNameEnum::Features));
 					}
 				}
@@ -135,6 +166,27 @@ impl SettingsTab for State {
 
 		Ok(())
 	}
+
+	fn push_task_string(
+		&mut self,
+		action: &str,
+		_config: &mut GeneralConfig,
+		_change_kind: &mut Option<ConfigChangeKind>,
+		_layout: &mut wgui::layout::Layout,
+		_state: &mut wgui::parser::ParserState,
+	) -> anyhow::Result<()> {
+		match action {
+			"swipe_type_download" => {
+				self.show_swipe_type_model_dialog_box_download()?;
+			}
+			"swipe_type_remove" => {
+				self.tasks.push(Task::SwipeTypeRemoveAll);
+				self.tasks.push(Task::ReloadTab);
+			}
+			_ => {}
+		}
+		Ok(())
+	}
 }
 
 impl State {
@@ -149,11 +201,14 @@ impl State {
 			whisper_models_dropdown(par.mp, c)?;
 		}
 
+		if par.feats.swipe_to_type {
+			swipe_type_models_button(par.mp, c)?;
+		}
+
 		options_checkbox(par.mp, c, SettingType::NotificationsEnabled)?;
 		options_checkbox(par.mp, c, SettingType::NotificationsSoundEnabled)?;
 		options_checkbox(par.mp, c, SettingType::KeyboardSoundEnabled)?;
-		options_checkbox(par.mp, c, SettingType::KeyboardSwipeToTypeEnabled)?;
-		
+
 		if !par.feats.openxr || par.feats.monado {
 			// monado or openvr
 			options_checkbox(par.mp, c, SettingType::BlockGameInput)?;
@@ -180,7 +235,8 @@ impl State {
 			popup_dialog,
 			frontend_tasks: par.frontend_tasks.clone(),
 			globals: par.mp.doc_params.globals.clone(),
-			pending_download: None,
+			pending_whisper_download: None,
+			pending_swipe_download: None,
 		})
 	}
 
@@ -199,11 +255,16 @@ impl State {
 		);
 	}
 
+	fn show_swipe_type_download_dialog(&mut self, models: &[SwipeTypeModel], executor: AsyncExecutor) {
+		//TODO: create views::download_files and use that
+		unimplemented!()
+	}
+
 	fn show_whisper_model_dialog_box_download(&mut self, model: &'static WhisperModel) -> anyhow::Result<()> {
 		const ACTION_DOWNLOAD: &str = "download";
 		const ACTION_CANCEL: &str = "cancel";
 
-		self.pending_download = Some(model);
+		self.pending_whisper_download = Some(model);
 
 		let tasks = self.tasks.clone();
 		views::dialog_box::mount_popup(
@@ -232,6 +293,45 @@ impl State {
 						tasks.push(Task::CloseDialog);
 						// treat as failed download
 						tasks.push(Task::WhisperDownloadClosed);
+					}
+					_ => unreachable!(),
+				}),
+			},
+		);
+
+		Ok(())
+	}
+
+	fn show_swipe_type_model_dialog_box_download(&mut self) -> anyhow::Result<()> {
+		const ACTION_DOWNLOAD: &str = "download";
+		const ACTION_CANCEL: &str = "cancel";
+
+		let tasks = self.tasks.clone();
+		views::dialog_box::mount_popup(
+			self.popup_dialog.clone(),
+			self.frontend_tasks.clone(),
+			views::dialog_box::Params {
+				globals: self.globals.clone(),
+				message: Translation::from_translation_key("APP_SETTINGS.SWIPE_TYPE.NEED_TO_DOWNLOAD_MODELS"),
+				entries: vec![
+					views::dialog_box::ButtonEntry {
+						content: Translation::from_translation_key("APP_SETTINGS.CANCEL"),
+						icon: "dashboard/close.svg",
+						action: ACTION_CANCEL,
+					},
+					views::dialog_box::ButtonEntry {
+						content: Translation::from_translation_key("DOWNLOAD"),
+						icon: "dashboard/download.svg",
+						action: ACTION_DOWNLOAD,
+					},
+				],
+				on_action_click: Box::new(move |action| match action {
+					ACTION_DOWNLOAD => {
+						tasks.push(Task::SwipeTypeDownloadAll);
+					}
+					ACTION_CANCEL => {
+						tasks.push(Task::CloseDialog);
+						tasks.push(Task::SwipeTypeDownloadClosed);
 					}
 					_ => unreachable!(),
 				}),
@@ -351,6 +451,48 @@ fn whisper_models_dropdown(mp: &mut MacroParams, parent: WidgetID) -> anyhow::Re
 				e.mouse_pos_absolute.unwrap_or_default(),
 				cells,
 			));
+			Ok(())
+		}
+	}));
+
+	Ok(())
+}
+
+fn swipe_type_models_button(mp: &mut MacroParams, parent: WidgetID) -> anyhow::Result<()> {
+	let id = mp.idx.to_string();
+	mp.idx += 1;
+
+	let id_cell = horiz_cell(mp.layout, parent)?;
+
+	let all_downloaded = swipe_type_all_models_downloaded().unwrap_or_default();
+	let (translation, icon, action) = if all_downloaded {
+		(
+			"APP_SETTINGS.SWIPE_TYPE.REMOVE_MODELS",
+			"dashboard/trash.svg",
+			"swipe_type_remove",
+		)
+	} else {
+		(
+			"APP_SETTINGS.SWIPE_TYPE.DOWNLOAD_MODELS;5.0 MiB",
+			"dashboard/download.svg",
+			"swipe_type_download",
+		)
+	};
+
+	let mut params = TemplateParams::new();
+	params.insert("id", &id);
+	params.insert("translation", translation);
+	params.insert("icon", icon);
+
+	mp.parser_state
+		.instantiate_template(mp.doc_params, "ButtonText", mp.layout, id_cell, params)?;
+
+	let btn = mp.parser_state.fetch_component_as::<ComponentButton>(&id)?;
+	btn.on_click(Rc::new({
+		let parent_tasks = mp.tasks.clone();
+		let action = Rc::<str>::from(action);
+		move |_common, _e: ButtonClickEvent| {
+			parent_tasks.push(ParentTask::SwipeTypeAction(action.clone()));
 			Ok(())
 		}
 	}));

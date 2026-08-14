@@ -588,6 +588,10 @@ impl DashInterface<AppState> for DashInterfaceLive {
             whisper: true,
             #[cfg(not(feature = "whisper"))]
             whisper: false,
+            #[cfg(feature = "swipe-to-type")]
+            swipe_to_type: true,
+            #[cfg(not(feature = "swipe-to-type"))]
+            swipe_to_type: false,
         }
     }
 

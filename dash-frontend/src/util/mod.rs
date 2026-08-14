@@ -7,3 +7,4 @@ pub mod steam_utils;
 pub mod toast_manager;
 pub mod wgui_simple;
 pub mod whisper;
+pub mod swipe_type;
