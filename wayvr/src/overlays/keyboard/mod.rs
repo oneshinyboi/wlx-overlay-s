@@ -89,7 +89,7 @@ pub const KEYBOARD_NAME: &str = "kbd";
 const AUTO_RELEASE_MODS: [KeyModifier; 5] = [SHIFT, CTRL, ALT, SUPER, ALTGR];
 
 /// Outcome of handling a key press (or motion) against the swipe-to-type engine.
-#[allow(dead_code)] // `Consumed` only constructed with `swipe-to-type` feature enabled
+#[allow(dead_code)]
 pub enum KeyPressOutcome {
     /// The event was fed into swipe tracking. Do not dispatch a key.
     Consumed,
@@ -98,7 +98,7 @@ pub enum KeyPressOutcome {
 }
 
 /// Outcome of handling a key release against the swipe-to-type engine.
-#[allow(dead_code)] // `Predict`/`TapKey` only constructed with `swipe-to-type` feature enabled
+#[allow(dead_code)]
 pub enum KeyReleaseOutcome {
     /// A swipe left the first key; prediction was already triggered. Nothing to dispatch.
     Predict,
