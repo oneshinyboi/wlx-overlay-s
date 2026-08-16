@@ -3,6 +3,7 @@ use crate::subsystem::hid::{KeyModifier, VirtualKey, CTRL};
 use anyhow::{bail};
 use glam::Vec2;
 use std::mem;
+use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, channel, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -87,14 +88,14 @@ impl SwipeTypingManager {
         app.hid_provider
             .set_modifiers_routed(app.wvr_server.as_mut(), original_keyboard_mods);
     }
-    pub fn new() -> anyhow::Result<(SwipeTypingManager, Receiver<Option<Vec<String>>>)> {
+    pub fn new(model_folder: PathBuf) -> anyhow::Result<(SwipeTypingManager, Receiver<Option<Vec<String>>>)> {
         let (candidate_sender, candidate_receiver) = sync_channel(1);
         let (task_sender, task_receiver) = channel::<PredictionTask>();
 
         // Spawn persistent worker thread
         let worker_candidate_sender = candidate_sender.clone();
         let worker_thread = thread::spawn(move || {
-            let mut swipe_engine = match SwipeOrchestrator::new() {
+            let mut swipe_engine = match SwipeOrchestrator::new_with_paths(&model_folder) {
                 Ok(engine) => engine,
                 Err(e) => {
                     log::error!("Failed to initialize SwipeOrchestrator: {}", e);

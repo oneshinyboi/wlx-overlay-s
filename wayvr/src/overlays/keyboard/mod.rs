@@ -45,6 +45,8 @@ use wlx_common::{
     config::AltModifier,
     overlays::{BackendAttrib, BackendAttribValue},
 };
+#[cfg(feature = "swipe-to-type")]
+use wlx_common::data_dir;
 use crate::overlays::keyboard::builder::update_swipe_prediction_bar;
 use crate::overlays::keyboard::layout::KeyCapType;
 use crate::overlays::keyboard::swipe_type::SwipeTypingManager;
@@ -52,8 +54,31 @@ use crate::overlays::keyboard::swipe_type::SwipeTypingManager;
 pub mod builder;
 mod layout;
 
-#[cfg(feature = "swipe-to-type ")]
+#[cfg(feature = "swipe-to-type")]
 mod swipe_type;
+
+#[cfg(not(feature = "swipe-to-type"))]
+mod swipe_type {
+    use std::sync::mpsc::Receiver;
+    use wgui::event::{DeviceBitmask, MouseButtonIndex};
+    use glam::Vec2;
+
+    pub struct SwipeTypingManager;
+
+    impl SwipeTypingManager {
+        pub fn new(_model_folder: std::path::PathBuf) -> anyhow::Result<(Self, Receiver<Option<Vec<String>>>)> {
+            Ok((Self, std::sync::mpsc::sync_channel(1).1))
+        }
+        pub fn add_swipe(&mut self, _within_key_pos_normalized: &Vec2, _key_label: char, _device: DeviceBitmask, _index: Option<MouseButtonIndex>) {}
+        pub fn predict(&mut self) -> anyhow::Result<()> { Ok(()) }
+        pub fn reset(&mut self) {}
+        pub fn did_swipe_leave_first_key(&self) -> bool { false }
+        pub fn is_current_swipe_empty(&self) -> bool { true }
+        pub fn current_swipe_mouse_button_index(&self) -> Option<MouseButtonIndex> { None }
+        pub fn select_word(&mut self, _word: &String, _app: &mut crate::state::AppState, _original_keyboard_mods: crate::subsystem::hid::KeyModifier) {}
+        pub fn select_alternate_prediction(&mut self, _word: &String, _app: &mut crate::state::AppState, _original_keyboard_mods: crate::subsystem::hid::KeyModifier) {}
+    }
+}
 
 pub const KEYBOARD_NAME: &str = "kbd";
 const AUTO_RELEASE_MODS: [KeyModifier; 5] = [SHIFT, CTRL, ALT, SUPER, ALTGR];
@@ -132,8 +157,9 @@ pub fn create_keyboard(app: &mut AppState, wayland: bool) -> anyhow::Result<Over
         ..OverlayWindowConfig::from_backend(Box::new(backend))
     })
 }
-pub(self) fn init_swipe_type_manager(state: &mut KeyboardState) {
-    match SwipeTypingManager::new() {
+#[cfg(feature = "swipe-to-type")]
+pub(self) fn init_swipe_type_manager(state: &mut KeyboardState, model_folder: std::path::PathBuf) {
+    match SwipeTypingManager::new(model_folder) {
         Ok((engine, receiver)) => {
             state.swipe_typing_manager = Some(engine);
             state.swipe_candidate_receiver = Some(receiver);
@@ -143,6 +169,7 @@ pub(self) fn init_swipe_type_manager(state: &mut KeyboardState) {
         }
     };
 }
+#[cfg(feature = "swipe-to-type")]
 pub(self) fn hide_swipe_type_manager(panel: &mut GuiPanel<KeyboardState>) {
     let predictions_root = panel.parser_state
         .get_widget_id("swipe_predictions_root")
@@ -188,7 +215,8 @@ impl KeyboardBackend {
         let mut state = self.default_state.take();
 
         if app.session.config.keyboard_swipe_to_type_enabled {
-            init_swipe_type_manager(&mut state);
+            #[cfg(feature = "swipe-to-type")]
+            init_swipe_type_manager(&mut state, data_dir::get_path("swipe_type"));
             log::info!("swipe engine created");
         }
 
@@ -196,6 +224,7 @@ impl KeyboardBackend {
             create_keyboard_panel(app, keymap, state, &self.wlx_layout)?;
 
         if !app.session.config.keyboard_swipe_to_type_enabled {
+            #[cfg(feature = "swipe-to-type")]
             hide_swipe_type_manager(&mut panel);
         }
 
@@ -243,7 +272,8 @@ impl KeyboardBackend {
             .take();
 
         if app.session.config.keyboard_swipe_to_type_enabled {
-            init_swipe_type_manager(&mut state_from);
+            #[cfg(feature = "swipe-to-type")]
+            init_swipe_type_manager(&mut state_from, data_dir::get_path("swipe_type"));
         }
 
         self.active_layout = new_key;
@@ -254,6 +284,7 @@ impl KeyboardBackend {
             .state = state_from;
 
         if !app.session.config.keyboard_swipe_to_type_enabled {
+            #[cfg(feature = "swipe-to-type")]
             hide_swipe_type_manager(self.layout_panels
                 .get_mut(self.active_layout)
                 .unwrap()

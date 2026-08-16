@@ -34,7 +34,11 @@ use wgui::{
 use wgui::event::StyleSetRequest;
 use wgui::layout::LayoutTask;
 use wgui::taffy::Display;
-use super::{KeyButtonData, KeyState, KeyboardState, handle_press, handle_release, layout::{self, KeyCapType}, handle_mouse_motion, init_swipe_type_manager};
+#[cfg(feature = "swipe-to-type")]
+use wlx_common::data_dir;
+use super::{KeyButtonData, KeyState, KeyboardState, handle_press, handle_release, layout::{self, KeyCapType}, handle_mouse_motion};
+#[cfg(feature = "swipe-to-type")]
+use super::init_swipe_type_manager;
 
 const PIXELS_PER_UNIT: f32 = 60.;
 
@@ -478,7 +482,8 @@ pub(super) fn create_keyboard_panel(
                         }
                     }
                     if app.session.config.keyboard_swipe_to_type_enabled && panel.state.swipe_typing_manager.is_none() {
-                        init_swipe_type_manager(&mut panel.state);
+                        #[cfg(feature = "swipe-to-type")]
+                        init_swipe_type_manager(&mut panel.state, data_dir::get_path("swipe_type"));
 
                         let predictions_root = panel.parser_state
                             .get_widget_id("swipe_predictions_root")

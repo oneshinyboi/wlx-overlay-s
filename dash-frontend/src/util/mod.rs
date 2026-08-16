@@ -8,3 +8,4 @@ pub mod toast_manager;
 pub mod wgui_simple;
 pub mod whisper;
 pub mod swipe_type;
+pub mod downloadable_file;
