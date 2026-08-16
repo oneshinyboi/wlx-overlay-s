@@ -15,7 +15,7 @@
 
   <macro name="prediction_rect"
     margin="2" padding="8 16" overflow="visible" box_sizing="border_box"
-    border_color="~color_accent_translucent" border="2" round="6" color="~color_accent_40" color2="~color_accent_10" gradient="vertical"
+    border_color="~color_accent_translucent" border="2" round="6" color="background_variant" color2="background" gradient="vertical"
     align_items="center" justify_content="center" />
 
   <theme>

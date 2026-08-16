@@ -32,7 +32,7 @@ use crate::{
 use anyhow::Context;
 use glam::{Affine3A, Quat, Vec3, vec3, Vec2};
 use regex::Regex;
-use slotmap::{SlotMap, new_key_type, Key};
+use slotmap::{SlotMap, new_key_type};
 use smallvec::SmallVec;
 use wgui::{
     color::WguiColor,
@@ -40,10 +40,7 @@ use wgui::{
     i18n::Translation,
     layout::WidgetID,
 };
-use wgui::event::{DeviceBitmask, StyleSetRequest};
-use wgui::layout::{LayoutTask};
-use wgui::parser::Fetchable;
-use wgui::taffy::Display;
+use wgui::event::DeviceBitmask;
 use wlx_common::windowing::{OverlayWindowState, Positioning};
 use wlx_common::{
     config::AltModifier,
@@ -51,12 +48,12 @@ use wlx_common::{
 };
 #[cfg(feature = "swipe-to-type")]
 use wlx_common::data_dir;
-use crate::overlays::keyboard::builder::update_swipe_prediction_bar;
 use crate::overlays::keyboard::layout::KeyCapType;
 use crate::overlays::keyboard::swipe_type::SwipeTypingManager;
 
 pub mod builder;
 mod layout;
+mod prediction_bar;
 
 #[cfg(feature = "swipe-to-type")]
 mod swipe_type;
@@ -69,6 +66,7 @@ mod swipe_type {
 
     pub struct SwipeTypingManager;
 
+    #[allow(dead_code)] // stub used only to satisfy compilation when the feature is disabled
     impl SwipeTypingManager {
         pub fn new(_model_folder: std::path::PathBuf) -> anyhow::Result<(Self, Receiver<Option<Vec<String>>>)> {
             Ok((Self, std::sync::mpsc::sync_channel(1).1))
@@ -79,6 +77,9 @@ mod swipe_type {
         pub fn did_swipe_leave_first_key(&self) -> bool { false }
         pub fn is_current_swipe_empty(&self) -> bool { true }
         pub fn current_swipe_mouse_button_index(&self) -> Option<MouseButtonIndex> { None }
+        pub fn handle_key_press(&mut self, _key_cap_type: &super::layout::KeyCapType, _within_key_pos: &Option<Vec2>, _key_label: &[String], _device: DeviceBitmask, _index: MouseButtonIndex) -> super::KeyPressOutcome { super::KeyPressOutcome::Dispatch }
+        pub fn handle_key_motion(&mut self, _key_cap_type: &super::layout::KeyCapType, _within_key_pos: &Option<Vec2>, _key_label: &[String], _device: DeviceBitmask) {}
+        pub fn handle_key_release(&mut self, _key_cap_type: &super::layout::KeyCapType, _alt_modifier: crate::subsystem::hid::KeyModifier) -> super::KeyReleaseOutcome { super::KeyReleaseOutcome::Normal }
         pub fn select_word(&mut self, _word: &String, _app: &mut crate::state::AppState, _original_keyboard_mods: crate::subsystem::hid::KeyModifier) {}
         pub fn select_alternate_prediction(&mut self, _word: &String, _app: &mut crate::state::AppState, _original_keyboard_mods: crate::subsystem::hid::KeyModifier) {}
     }
@@ -86,6 +87,26 @@ mod swipe_type {
 
 pub const KEYBOARD_NAME: &str = "kbd";
 const AUTO_RELEASE_MODS: [KeyModifier; 5] = [SHIFT, CTRL, ALT, SUPER, ALTGR];
+
+/// Outcome of handling a key press (or motion) against the swipe-to-type engine.
+#[allow(dead_code)] // `Consumed` only constructed with `swipe-to-type` feature enabled
+pub enum KeyPressOutcome {
+    /// The event was fed into swipe tracking. Do not dispatch a key.
+    Consumed,
+    /// Not a swipe target. Dispatch as a normal key event.
+    Dispatch,
+}
+
+/// Outcome of handling a key release against the swipe-to-type engine.
+#[allow(dead_code)] // `Predict`/`TapKey` only constructed with `swipe-to-type` feature enabled
+pub enum KeyReleaseOutcome {
+    /// A swipe left the first key; prediction was already triggered. Nothing to dispatch.
+    Predict,
+    /// Pressed and released on the same key. Dispatch a tap with the given modifier.
+    TapKey { modifier: KeyModifier },
+    /// Not a swipe target. Dispatch a normal key-up.
+    Normal,
+}
 const SYSTEM_LAYOUT_ALIASES: [&str; 5] = ["mozc", "pinyin", "hangul", "sayura", "unikey"];
 
 pub fn create_keyboard(app: &mut AppState) -> anyhow::Result<OverlayWindowConfig> {
@@ -164,18 +185,6 @@ pub(self) fn init_swipe_type_manager(state: &mut KeyboardState, model_path: std:
         }
     };
 }
-#[cfg(feature = "swipe-to-type")]
-pub(self) fn hide_swipe_type_manager(panel: &mut GuiPanel<KeyboardState>) {
-    let predictions_root = panel.parser_state
-        .get_widget_id("swipe_predictions_root")
-        .unwrap_or_default();
-    if !predictions_root.is_null() {
-        panel.layout.tasks.push(LayoutTask::SetWidgetStyle(
-            predictions_root,
-            StyleSetRequest::Display(Display::None),
-        ));
-    }
-}
 const fn alt_modifier_to_key(m: AltModifier) -> KeyModifier {
     match m {
         AltModifier::Shift => SHIFT,
@@ -220,8 +229,7 @@ impl KeyboardBackend {
             create_keyboard_panel(app, keymap, state, &self.wlx_layout)?;
 
         if !app.session.config.keyboard_swipe_to_type_enabled {
-            #[cfg(feature = "swipe-to-type")]
-            hide_swipe_type_manager(&mut panel);
+            prediction_bar::set_visible(&mut panel, false);
         }
 
         let id = self.layout_panels.insert(panel);
@@ -280,11 +288,12 @@ impl KeyboardBackend {
             .state = state_from;
 
         if !app.session.config.keyboard_swipe_to_type_enabled {
-            #[cfg(feature = "swipe-to-type")]
-            hide_swipe_type_manager(self.layout_panels
-                .get_mut(self.active_layout)
-                .unwrap()
-            )
+            prediction_bar::set_visible(
+                self.layout_panels
+                    .get_mut(self.active_layout)
+                    .unwrap(),
+                false,
+            );
         }
     }
 
@@ -320,7 +329,7 @@ impl KeyboardBackend {
     }
 
     fn update_swipe_prediction_bar(&mut self, app: &mut AppState) -> anyhow::Result<()> {
-        if update_swipe_prediction_bar(self.panel(), app)? {
+        if prediction_bar::update(self.panel(), app)? {
             self.panel().process_custom_elems(app);
         }
         Ok(())
@@ -578,27 +587,11 @@ fn handle_mouse_motion(
     within_key_pos: &Option<Vec2>,
     device: DeviceBitmask
 ) {
-    if let Some(swipe_manager) = keyboard.swipe_typing_manager.as_mut()
-        && matches!(*key_cap_type, KeyCapType::Letter | KeyCapType::LetterAltGr)
+    if let KeyButtonData::Key { .. } = &key.button_state
+        && let Some(swipe_manager) = keyboard.swipe_typing_manager.as_mut()
     {
-        if !swipe_manager.is_current_swipe_empty() {
-            match &key.button_state {
-                KeyButtonData::Key { vk, pressed } => {
-                    if let Some(pos) = within_key_pos {
-                        // check because mouse motion can trigger despite hover being false
-                        if pos.x >= 0.0 && pos.x <= 1.0 && pos.y >= 0.0 && pos.y <= 1.0 {
-
-                            if let Some(label) = key_label.first() {
-                                swipe_manager.add_swipe(pos, label.chars().next().unwrap_or_default(), device, None);
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        swipe_manager.handle_key_motion(key_cap_type, within_key_pos, key_label, device);
     }
-
 }
 fn handle_press(
     app: &mut AppState,
@@ -612,16 +605,14 @@ fn handle_press(
 ) {
     match &key.button_state {
         KeyButtonData::Key { vk, pressed } => {
-            if let Some(swipe_manager) = keyboard.swipe_typing_manager.as_mut()
-                && matches!(*key_cap_type, KeyCapType::Letter | KeyCapType::LetterAltGr)
-            {
-                if let Some(pos) = within_key_pos {
-                    if let Some(label) = key_label.first() {
-                        swipe_manager.add_swipe(pos, label.chars().next().unwrap_or_default(), device, Some(button.index));
-                    }
+            let outcome = match keyboard.swipe_typing_manager.as_mut() {
+                Some(swipe_manager) => {
+                    swipe_manager.handle_key_press(key_cap_type, within_key_pos, key_label, device, button.index)
                 }
-            }
-            else {
+                None => KeyPressOutcome::Dispatch,
+            };
+
+            if matches!(outcome, KeyPressOutcome::Dispatch) {
                 keyboard.modifiers |= match button.index {
                     MouseButtonIndex::Right => SHIFT,
                     MouseButtonIndex::Middle => keyboard.alt_modifier,
@@ -683,25 +674,17 @@ fn handle_press(
 fn handle_release(app: &mut AppState, key: &KeyState, k_cap_type: &KeyCapType, keyboard: &mut KeyboardState) -> bool {
     match &key.button_state {
         KeyButtonData::Key { vk, pressed } => {
-            if let Some(swipe_manager) = keyboard.swipe_typing_manager.as_mut()
-                && matches!(*k_cap_type, KeyCapType::Letter | KeyCapType::LetterAltGr)
-            {
-                if swipe_manager.did_swipe_leave_first_key() {
-                    match swipe_manager.predict() {
-                        Ok(()) => {},
-                        Err(e) => {
-                            log::error!("{}", e)
-                        }
-                    }
+            let outcome = match keyboard.swipe_typing_manager.as_mut() {
+                Some(swipe_manager) => {
+                    swipe_manager.handle_key_release(k_cap_type, keyboard.alt_modifier)
                 }
-                else { // pointer must have been released on the same key it was pressed on
-                    keyboard.modifiers |= match swipe_manager.current_swipe_mouse_button_index() {
-                        Some(MouseButtonIndex::Right) => SHIFT,
-                        Some(MouseButtonIndex::Middle) => keyboard.alt_modifier,
-                        _ => 0,
-                    };
-                    swipe_manager.reset(); // drop swipe tracking that was started on press
+                None => KeyReleaseOutcome::Normal,
+            };
 
+            match outcome {
+                KeyReleaseOutcome::Predict => {}
+                KeyReleaseOutcome::TapKey { modifier } => {
+                    keyboard.modifiers |= modifier;
                     app.hid_provider
                         .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
                     app.hid_provider
@@ -717,22 +700,19 @@ fn handle_release(app: &mut AppState, key: &KeyState, k_cap_type: &KeyCapType, k
                     }
                     play_key_click(app);
                 }
-            }
-            else {
-                if let Some(swipe_manager) = keyboard.swipe_typing_manager.as_mut() {
-                    swipe_manager.reset();
-                }
-                pressed.set(false);
+                KeyReleaseOutcome::Normal => {
+                    pressed.set(false);
 
-                for m in &AUTO_RELEASE_MODS {
-                    if keyboard.modifiers & *m != 0 {
-                        keyboard.modifiers &= !*m;
+                    for m in &AUTO_RELEASE_MODS {
+                        if keyboard.modifiers & *m != 0 {
+                            keyboard.modifiers &= !*m;
+                        }
                     }
+                    app.hid_provider
+                        .send_key_routed(app.wvr_server.as_mut(), *vk, false);
+                    app.hid_provider
+                        .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
                 }
-                app.hid_provider
-                    .send_key_routed(app.wvr_server.as_mut(), *vk, false);
-                app.hid_provider
-                    .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
             }
             true
         }

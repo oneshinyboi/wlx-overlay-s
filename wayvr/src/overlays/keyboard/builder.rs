@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc, time::Duration};
+use std::{rc::Rc, time::Duration};
 
 use crate::{
     app_misc,
@@ -11,9 +11,8 @@ use crate::{
     subsystem::hid::XkbKeymap,
     windowing::backend::OverlayEventData,
 };
-use anyhow::{bail, Context};
+use anyhow::Context;
 use glam::{FloatExt, Mat4, Vec2, vec2, vec3};
-use slotmap::Key;
 use smallvec::{SmallVec, smallvec};
 use wgui::{
     animation::{Animation, AnimationEasing},
@@ -31,9 +30,6 @@ use wgui::{
         sprite::WidgetSprite,
     },
 };
-use wgui::event::StyleSetRequest;
-use wgui::layout::LayoutTask;
-use wgui::taffy::Display;
 #[cfg(feature = "swipe-to-type")]
 use wlx_common::data_dir;
 use super::{KeyButtonData, KeyState, KeyboardState, handle_press, handle_release, layout::{self, KeyCapType}, handle_mouse_motion};
@@ -42,151 +38,12 @@ use super::init_swipe_type_manager;
 
 const PIXELS_PER_UNIT: f32 = 60.;
 
-fn new_doc_params(panel: &mut GuiPanel<KeyboardState>) -> ParseDocumentParams<'static> {
+pub(super) fn new_doc_params(panel: &mut GuiPanel<KeyboardState>) -> ParseDocumentParams<'static> {
     ParseDocumentParams {
         globals: panel.layout.state.globals.clone(),
         path: AssetPath::FileOrBuiltIn("gui/keyboard.xml"),
         extra: panel.doc_extra.take().unwrap_or_default(),
     }
-}
-
-pub(super) fn update_swipe_prediction_bar(
-    panel: &mut GuiPanel<KeyboardState>,
-    app: &mut AppState
-) -> anyhow::Result<bool> {
-    let mut elements_changed = false;
-
-    let anim_mult = app.wgui_theme.animation_mult;
-
-    if let Some(recv) = panel.state.swipe_candidate_receiver.as_mut()
-    && let Ok(candidates) = recv.try_recv() {
-
-        let predictions_root = panel.parser_state
-            .get_widget_id("swipe_predictions_root")
-            .unwrap_or_default();
-
-        if predictions_root.is_null() {
-            return Ok(elements_changed)
-        }
-        let doc_params = new_doc_params(panel);
-
-        panel.layout.remove_children(predictions_root);
-
-        let Some(new_suggestions) = candidates else {
-            return Ok(elements_changed)
-        };
-
-        let mut iter = new_suggestions.iter();
-        let Some(best_prediction) = iter.next() else {
-            bail!("not enough swipe predictions");
-        };
-        if let Some(manager) = panel.state.swipe_typing_manager.as_mut() {
-            manager.select_word(best_prediction, app, panel.state.modifiers);
-        }
-        for (i, prediction) in iter.enumerate() {
-            let mut params = HashMap::new();
-            let id: Rc<str> = Rc::from(format!("Prediction-{i}"));
-            params.insert("id".into(), id.clone());
-            params.insert("text".into(), prediction.clone().into());
-
-            panel.parser_state.instantiate_template(
-                &doc_params,
-                "KeyPrediction",
-                &mut panel.layout,
-                predictions_root,
-                TemplateParams::from_hashmap(params)
-            )?;
-
-            if let Ok(widget_id) = panel.parser_state.get_widget_id(&id) {
-                let key_state = {
-                    let rect = panel
-                        .layout
-                        .state
-                        .widgets
-                        .get_as::<WidgetRectangle>(widget_id)
-                        .unwrap(); // want panic
-
-                    Rc::new(KeyState {
-                        // fake button state just so we get key state for anims
-                        button_state: KeyButtonData::Modifier {
-                            modifier: 0,
-                            sticky: core::cell::Cell::new(false),
-                        },
-                        color: rect.params.color,
-                        color2: rect.params.color2,
-                        base_border_color: rect.params.border_color,
-                        cur_border_color: rect.params.border_color.into(),
-                        border: rect.params.border,
-                        drawn_state: false.into(),
-                        labels: Default::default(),
-                        sprites: Default::default(),
-                    })
-                };
-                panel.add_event_listener(
-                    widget_id,
-                    EventListenerKind::MousePress,
-                    Box::new({
-                        let k = key_state.clone();
-                        let pred = prediction.clone();
-                        move |common, data, app, state| {
-                            if let Some(manager) = state.swipe_typing_manager.as_mut() {
-                                manager.select_alternate_prediction(&pred, app, state.modifiers);
-                                on_press_anim(k.clone(), common, data)
-                            }
-                            Ok(EventResult::Pass)
-                        }
-                    })
-                );
-                panel.add_event_listener(
-                    widget_id,
-                    EventListenerKind::MouseEnter,
-                    Box::new({
-                        let k = key_state.clone();
-                        move |common, data, _app, _state| {
-                            on_enter_anim(
-                                k.clone(),
-                                common,
-                                data,
-                                anim_mult,
-                                0.0,
-                            );
-                            Ok(EventResult::Pass)
-                        }
-                    })
-                );
-                panel.add_event_listener(
-                    widget_id,
-                    EventListenerKind::MouseLeave,
-                    Box::new({
-                        let k = key_state.clone();
-                        move |common, data, _app, _state | {
-                            on_leave_anim(
-                                k.clone(),
-                                common,
-                                data,
-                                anim_mult,
-                                0.0,
-                            );
-                            Ok(EventResult::Pass)
-                        }
-                    })
-                );
-                panel.add_event_listener(
-                    widget_id,
-                    EventListenerKind::MouseRelease,
-                    Box::new({
-                        let k = key_state.clone();
-                        move |common, data, _app, _state| {
-                            on_release_anim(k.clone(), common, data);
-                            Ok(EventResult::Pass)
-                        }
-                    })
-                );
-            }
-        }
-        elements_changed = true;
-    }
-    Ok(elements_changed)
 }
 fn bool_to_rc_str(val: bool) -> Rc<str> {
     if val { "1" } else { "0" }.into()
@@ -489,34 +346,13 @@ pub(super) fn create_keyboard_panel(
                         panel.state.swipe_typing_manager = None;
                         panel.state.swipe_candidate_receiver = None;
 
-                        let predictions_root = panel.parser_state
-                            .get_widget_id("swipe_predictions_root")
-                            .unwrap_or_default();
-
-                        if !predictions_root.is_null() {
-                            panel.layout.remove_children(predictions_root);
-
-                            panel.layout.tasks.push(LayoutTask::SetWidgetStyle(
-                                predictions_root,
-                                StyleSetRequest::Display(Display::None),
-                            ));
-
-                        }
+                        super::prediction_bar::set_visible(panel, false);
                     }
                     if app.session.config.keyboard_swipe_to_type_enabled && panel.state.swipe_typing_manager.is_none() {
                         #[cfg(feature = "swipe-to-type")]
                         init_swipe_type_manager(&mut panel.state, data_dir::get_path("swipe_type").join("en.tar"));
 
-                        let predictions_root = panel.parser_state
-                            .get_widget_id("swipe_predictions_root")
-                            .unwrap_or_default();
-
-                        if !predictions_root.is_null() {
-                            panel.layout.tasks.push(LayoutTask::SetWidgetStyle(
-                                predictions_root,
-                                StyleSetRequest::Display(Display::Flex),
-                            ));
-                        }
+                        super::prediction_bar::set_visible(panel, true);
                     }
                 }
 
@@ -612,7 +448,7 @@ fn set_anim_color(
     rect.params.border = key_state.border.lerp(key_state.border * 1.5, pos);
 }
 
-fn on_enter_anim(
+pub(super) fn on_enter_anim(
     key_state: Rc<KeyState>,
     common: &mut event::CallbackDataCommon,
     data: &event::CallbackData,
@@ -660,7 +496,7 @@ fn on_enter_anim(
     ));
 }
 
-fn on_leave_anim(
+pub(super) fn on_leave_anim(
     key_state: Rc<KeyState>,
     common: &mut event::CallbackDataCommon,
     data: &event::CallbackData,
@@ -710,7 +546,7 @@ fn on_leave_anim(
     ));
 }
 
-fn on_press_anim(
+pub(super) fn on_press_anim(
     key_state: Rc<KeyState>,
     common: &mut event::CallbackDataCommon,
     data: &mut event::CallbackData,
@@ -725,7 +561,7 @@ fn on_press_anim(
     key_state.drawn_state.set(true);
 }
 
-fn on_release_anim(
+pub(super) fn on_release_anim(
     key_state: Rc<KeyState>,
     common: &mut event::CallbackDataCommon,
     data: &mut event::CallbackData,

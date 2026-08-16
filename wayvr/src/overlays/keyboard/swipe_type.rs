@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use crate::subsystem::hid::{KeyModifier, VirtualKey, CTRL};
+use crate::subsystem::hid::{KeyModifier, VirtualKey, CTRL, SHIFT};
 use anyhow::{bail};
 use glam::Vec2;
 use std::mem;
@@ -15,6 +15,7 @@ use wgui::log::LogErr;
 use crate::subsystem::clipboard;
 use crate::subsystem::clipboard::ClipboardProvider;
 use crate::subsystem::input::InputFocus;
+use super::layout::KeyCapType;
 
 const PREDICTION_SUGGESTION_COUNT: usize = 5;
 
@@ -215,6 +216,79 @@ impl SwipeTypingManager {
     
     pub const fn current_swipe_mouse_button_index(&self) -> Option<MouseButtonIndex> {
         self.current_swipe_mouse_button_index
+    }
+
+    /// Handle a key press. Letter keys feed the swipe engine and are consumed;
+    /// anything else is dispatched as a normal key.
+    pub fn handle_key_press(
+        &mut self,
+        key_cap_type: &KeyCapType,
+        within_key_pos: &Option<Vec2>,
+        key_label: &[String],
+        device: DeviceBitmask,
+        index: MouseButtonIndex,
+    ) -> super::KeyPressOutcome {
+        if !matches!(key_cap_type, KeyCapType::Letter | KeyCapType::LetterAltGr) {
+            return super::KeyPressOutcome::Dispatch;
+        }
+
+        if let Some(pos) = within_key_pos
+            && let Some(label) = key_label.first()
+        {
+            self.add_swipe(pos, label.chars().next().unwrap_or_default(), device, Some(index));
+        }
+
+        super::KeyPressOutcome::Consumed
+    }
+
+    /// Handle pointer motion over a key while swiping.
+    pub fn handle_key_motion(
+        &mut self,
+        key_cap_type: &KeyCapType,
+        within_key_pos: &Option<Vec2>,
+        key_label: &[String],
+        device: DeviceBitmask,
+    ) {
+        if !self.is_current_swipe_empty()
+            && matches!(key_cap_type, KeyCapType::Letter | KeyCapType::LetterAltGr)
+            && let Some(pos) = within_key_pos
+            && pos.x >= 0.0
+            && pos.x <= 1.0
+            && pos.y >= 0.0
+            && pos.y <= 1.0
+            && let Some(label) = key_label.first()
+        {
+            self.add_swipe(pos, label.chars().next().unwrap_or_default(), device, None);
+        }
+    }
+
+    /// Handle a key release. A swipe that left the first key triggers a
+    /// prediction; a tap on the same key dispatches the key; anything else is
+    /// a normal key-up.
+    pub fn handle_key_release(
+        &mut self,
+        key_cap_type: &KeyCapType,
+        alt_modifier: KeyModifier,
+    ) -> super::KeyReleaseOutcome {
+        if !matches!(key_cap_type, KeyCapType::Letter | KeyCapType::LetterAltGr) {
+            self.reset();
+            return super::KeyReleaseOutcome::Normal;
+        }
+
+        if self.did_swipe_leave_first_key() {
+            if let Err(e) = self.predict() {
+                log::error!("{}", e);
+            }
+            return super::KeyReleaseOutcome::Predict;
+        }
+
+        let modifier = match self.current_swipe_mouse_button_index() {
+            Some(MouseButtonIndex::Right) => SHIFT,
+            Some(MouseButtonIndex::Middle) => alt_modifier,
+            _ => 0,
+        };
+        self.reset();
+        super::KeyReleaseOutcome::TapKey { modifier }
     }
 
     pub fn add_swipe(&mut self, within_key_pos_normalized: &Vec2, key_label: char, device: DeviceBitmask, index: Option<MouseButtonIndex>) {
