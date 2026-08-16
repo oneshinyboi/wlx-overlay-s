@@ -620,6 +620,7 @@ impl SettingType {
 			Self::InputCaptureMethod => Some("APP_SETTINGS.INPUT_CAPTURE_METHOD_HELP"),
 			Self::InputEmulationMethod => Some("APP_SETTINGS.INPUT_EMULATION_METHOD_HELP"),
 			Self::KeyboardMiddleClick => Some("APP_SETTINGS.KEYBOARD_MIDDLE_CLICK_HELP"),
+			Self::KeyboardSwipeToTypeEnabled => Some("APP_SETTINGS.KEYBOARD_SWIPE_TO_TYPE_ENABLED_HELP"),
 			Self::LeftHandedMouse => Some("APP_SETTINGS.LEFT_HANDED_MOUSE_HELP"),
 			Self::MouseAcceleration => Some("APP_SETTINGS.POINTER_ACCELERATION_HELP"),
 			Self::ScreenRenderDown => Some("APP_SETTINGS.SCREEN_RENDER_DOWN_HELP"),

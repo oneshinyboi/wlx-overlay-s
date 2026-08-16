@@ -314,7 +314,7 @@ impl State {
 			self.frontend_tasks.clone(),
 			views::dialog_box::Params {
 				globals: self.globals.clone(),
-				message: Translation::from_translation_key("APP_SETTINGS.SWIPE_TYPE.NEED_TO_DOWNLOAD_MODELS"),
+				message: Translation::from_translation_key("APP_SETTINGS.SWIPE_TYPE.NEED_TO_DOWNLOAD_MODEL"),
 				entries: vec![
 					views::dialog_box::ButtonEntry {
 						content: Translation::from_translation_key("APP_SETTINGS.CANCEL"),
@@ -469,13 +469,13 @@ fn swipe_type_models_button(mp: &mut MacroParams, parent: WidgetID) -> anyhow::R
 	let all_downloaded = swwipe_type_model_downloaded().unwrap_or_default();
 	let (translation, icon, action) = if all_downloaded {
 		(
-			"APP_SETTINGS.SWIPE_TYPE.REMOVE_MODELS",
+			"APP_SETTINGS.SWIPE_TYPE.REMOVE_MODEL",
 			"dashboard/trash.svg",
 			"swipe_type_remove",
 		)
 	} else {
 		(
-			"APP_SETTINGS.SWIPE_TYPE.DOWNLOAD_MODELS",
+			"APP_SETTINGS.SWIPE_TYPE.DOWNLOAD_MODEL",
 			"dashboard/download.svg",
 			"swipe_type_download",
 		)
