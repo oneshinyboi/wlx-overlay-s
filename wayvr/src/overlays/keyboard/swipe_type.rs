@@ -127,24 +127,22 @@ impl SwipeTypingManager {
         });
         let clipboard_provider: Option<Box<dyn ClipboardProvider>> = {
             #[cfg(feature = "wayland")]
-            {
-                clipboard::wl::Provider::new()
-                    .log_err("Could not create Wayland clipboard provider")
-                    .ok()
-                    .map(|p| Box::new(p) as Box<dyn ClipboardProvider>)
-            }
-            #[cfg(feature = "x11")]
-            {
-                clipboard::x11::Provider::new()
-                    .log_err("Could not create X11 clipboard provider")
-                    .ok()
-                    .map(|p| Box::new(p) as Box<dyn ClipboardProvider>)
-            }
-            #[cfg(not(any(feature = "wayland", feature = "x11")))]
-            {
-                None
-            }
+            let wl = clipboard::wl::Provider::new()
+                .log_err("Could not create Wayland clipboard provider")
+                .ok()
+                .map(|p| Box::new(p) as Box<dyn ClipboardProvider>);
+            #[cfg(not(feature = "wayland"))]
+            let wl = None;
 
+            #[cfg(feature = "x11")]
+            let x11 = clipboard::x11::Provider::new()
+                .log_err("Could not create X11 clipboard provider")
+                .ok()
+                .map(|p| Box::new(p) as Box<dyn ClipboardProvider>);
+            #[cfg(not(feature = "x11"))]
+            let x11 = None;
+
+            wl.or(x11)
         };
         Ok((
             Self {

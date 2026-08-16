@@ -238,13 +238,18 @@ fn anim_hover(anim_data: &mut crate::animation::CallbackData<'_>, pos: f32, pres
 }
 
 fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -> Animation {
-	let down = state.borrow().down;
+	let down;
+	let disabled;
+	{
+		let state = state.borrow();
+		down = state.down;
+		disabled = state.disabled;
+	}
 	Animation::new(
 		data.id_outer_box,
 		(5. * anim_mult) as _,
 		AnimationEasing::OutQuad,
 		Box::new(move |common, anim_data| {
-			let disabled = state.borrow().disabled;
 			anim_hover(anim_data, anim_data.pos, down, disabled);
 			common.alterables.mark_redraw();
 		}),
@@ -252,13 +257,18 @@ fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) ->
 }
 
 fn anim_hover_out(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -> Animation {
-	let down = state.borrow().down;
+	let down;
+	let disabled;
+	{
+		let state = state.borrow();
+		down = state.down;
+		disabled = state.disabled;
+	}
 	Animation::new(
 		data.id_outer_box,
 		(8. * anim_mult) as _,
 		AnimationEasing::OutQuad,
 		Box::new(move |common, anim_data| {
-			let disabled = state.borrow().disabled;
 			anim_hover(anim_data, 1.0 - anim_data.pos, down, disabled);
 			common.alterables.mark_redraw();
 		}),
@@ -288,7 +298,7 @@ fn register_event_mouse_enter(
 				common.alterables.trigger_haptics();
 				common
 					.alterables
-					.animate(anim_hover_in(state.clone(), data.clone(), anim_mult));
+					.animate(anim_hover_in(&state, &data, anim_mult));
 
 				if checked {
 					common
@@ -330,7 +340,7 @@ fn register_event_mouse_leave(
 				common.alterables.trigger_haptics();
 				common
 					.alterables
-					.animate(anim_hover_out(state.clone(), data.clone(), anim_mult));
+					.animate(anim_hover_out(&state, &data, anim_mult));
 
 				if checked {
 					common

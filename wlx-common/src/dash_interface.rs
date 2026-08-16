@@ -63,6 +63,7 @@ impl InterfaceFeats {
 			monado: false,
 			passthru: false,
 			whisper: false,
+			swipe_to_type: false,
 		}
 	}
 }

@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Duration};
+use std::{collections::HashMap, rc::Rc, time::Duration};
 
 use crate::{
     app_misc,
@@ -505,7 +505,7 @@ pub(super) fn create_keyboard_panel(
                     }
                     if app.session.config.keyboard_swipe_to_type_enabled && panel.state.swipe_typing_manager.is_none() {
                         #[cfg(feature = "swipe-to-type")]
-                        init_swipe_type_manager(&mut panel.state, data_dir::get_path("swipe_type"));
+                        init_swipe_type_manager(&mut panel.state, data_dir::get_path("swipe_type").join("en.tar"));
 
                         let predictions_root = panel.parser_state
                             .get_widget_id("swipe_predictions_root")
