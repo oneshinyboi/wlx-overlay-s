@@ -158,8 +158,8 @@ pub fn create_keyboard(app: &mut AppState, wayland: bool) -> anyhow::Result<Over
     })
 }
 #[cfg(feature = "swipe-to-type")]
-pub(self) fn init_swipe_type_manager(state: &mut KeyboardState, model_folder: std::path::PathBuf) {
-    match SwipeTypingManager::new(model_folder) {
+pub(self) fn init_swipe_type_manager(state: &mut KeyboardState, model_path: std::path::PathBuf) {
+    match SwipeTypingManager::new(model_path) {
         Ok((engine, receiver)) => {
             state.swipe_typing_manager = Some(engine);
             state.swipe_candidate_receiver = Some(receiver);
@@ -216,7 +216,7 @@ impl KeyboardBackend {
 
         if app.session.config.keyboard_swipe_to_type_enabled {
             #[cfg(feature = "swipe-to-type")]
-            init_swipe_type_manager(&mut state, data_dir::get_path("swipe_type"));
+            init_swipe_type_manager(&mut state, data_dir::get_path("swipe_type").join("en.tar"));
             log::info!("swipe engine created");
         }
 
@@ -273,7 +273,7 @@ impl KeyboardBackend {
 
         if app.session.config.keyboard_swipe_to_type_enabled {
             #[cfg(feature = "swipe-to-type")]
-            init_swipe_type_manager(&mut state_from, data_dir::get_path("swipe_type"));
+            init_swipe_type_manager(&mut state_from, data_dir::get_path("swipe_type").join("en.tar"));
         }
 
         self.active_layout = new_key;

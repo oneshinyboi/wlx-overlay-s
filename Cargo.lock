@@ -6079,9 +6079,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "super-swipe-type"
-version = "0.3.2"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2514d173cdebfac064577dd38387f71244daa7aa4d769076a5806fd4f7cf73e"
+checksum = "d39d2eca9f0ac1a82ec03e8de1b7672a9a145f5bcdeae941efd943d9b9575b5c"
 dependencies = [
  "anyhow",
  "cached-path",
@@ -6090,6 +6090,7 @@ dependencies = [
  "regex",
  "regex-automata 0.1.10",
  "rten",
+ "tar",
  "vector2",
 ]
 

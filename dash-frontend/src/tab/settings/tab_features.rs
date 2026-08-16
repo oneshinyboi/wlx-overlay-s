@@ -211,8 +211,8 @@ impl State {
 
 		if par.feats.swipe_to_type {
 			swipe_type_models_button(par.mp, c)?;
+			swipe_type_enabled_checkbox(par.mp, c)?;
 		}
-		swipe_type_enabled_checkbox(par.mp, c)?;
 		options_checkbox(par.mp, c, SettingType::NotificationsEnabled)?;
 		options_checkbox(par.mp, c, SettingType::NotificationsSoundEnabled)?;
 		options_checkbox(par.mp, c, SettingType::KeyboardSoundEnabled)?;

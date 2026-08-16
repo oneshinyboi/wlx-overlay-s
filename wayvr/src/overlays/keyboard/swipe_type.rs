@@ -53,7 +53,7 @@ impl SwipeTypingManager {
         match app.hid_provider.get_input_focus() {
              InputFocus::PhysicalScreen => {
                 if let Some(clipboard) = self.clipboard.as_mut() {
-                    clipboard.set_clipboard_utf8(&*text_to_paste);
+                    clipboard.set_clipboard_utf8(&text_to_paste);
                     Self::paste(app, original_keyboard_mods);
                 }
             },
@@ -88,17 +88,17 @@ impl SwipeTypingManager {
         app.hid_provider
             .set_modifiers_routed(app.wvr_server.as_mut(), original_keyboard_mods);
     }
-    pub fn new(model_folder: PathBuf) -> anyhow::Result<(SwipeTypingManager, Receiver<Option<Vec<String>>>)> {
+    pub fn new(model_path: PathBuf) -> anyhow::Result<(SwipeTypingManager, Receiver<Option<Vec<String>>>)> {
         let (candidate_sender, candidate_receiver) = sync_channel(1);
         let (task_sender, task_receiver) = channel::<PredictionTask>();
 
         // Spawn persistent worker thread
         let worker_candidate_sender = candidate_sender.clone();
         let worker_thread = thread::spawn(move || {
-            let mut swipe_engine = match SwipeOrchestrator::new_with_paths(&model_folder) {
+            let mut swipe_engine = match SwipeOrchestrator::new_from_path(&model_path) {
                 Ok(engine) => engine,
                 Err(e) => {
-                    log::error!("Failed to initialize SwipeOrchestrator: {}", e);
+                    log::error!("Failed to initialize SwipeOrchestrator: {e}");
                     return;
                 }
             };
@@ -117,7 +117,7 @@ impl SwipeTypingManager {
                                 let _ = worker_candidate_sender.send(Some(words));
                             }
                             Err(e) => {
-                                log::error!("Prediction failed: {}", e);
+                                log::error!("Prediction failed: {e}");
                             }
                         }
                     }
@@ -131,7 +131,7 @@ impl SwipeTypingManager {
                 clipboard::wl::Provider::new()
                     .log_err("Could not create Wayland clipboard provider")
                     .ok()
-                    .map(|p| Box::new(p) as Box<dyn ClipboardProvider>);
+                    .map(|p| Box::new(p) as Box<dyn ClipboardProvider>)
             }
             #[cfg(feature = "x11")]
             {
@@ -207,25 +207,24 @@ impl SwipeTypingManager {
         now
     }
 
-    pub fn did_swipe_leave_first_key(&self) -> bool {
+    pub const fn did_swipe_leave_first_key(&self) -> bool {
         self.swipe_left_first_key
     }
 
-    pub fn is_current_swipe_empty(&self) -> bool {
+    pub const fn is_current_swipe_empty(&self) -> bool {
         self.current_swipe.is_empty()
     }
     
-    pub fn current_swipe_mouse_button_index(&self) -> Option<MouseButtonIndex> {
+    pub const fn current_swipe_mouse_button_index(&self) -> Option<MouseButtonIndex> {
         self.current_swipe_mouse_button_index
     }
 
     pub fn add_swipe(&mut self, within_key_pos_normalized: &Vec2, key_label: char, device: DeviceBitmask, index: Option<MouseButtonIndex>) {
         if let Some(pos) = self.keyboard_gird.key_positions.get(&key_label.to_ascii_lowercase()) {
-            if let Some(current_device) = self.current_swipe_device {
-                if current_device != device {
-                    return;
-                }
+            if let Some(current_device) = self.current_swipe_device && current_device != device {
+                return;
             }
+
 
             if self.first_swipe_char != char::default()
                 && self.first_swipe_char != key_label.to_ascii_lowercase()
@@ -255,7 +254,7 @@ impl SwipeTypingManager {
             let point = within_key_pos_from_center * key_dimensions + key_pos;
             let duration = Instant::now().duration_since(start_time).mul_f32(0.8); // multiply by .8 because library is trained on mobile swipes which happen on a smaller keyboard and are faster
             self.current_swipe
-                .push(SwipePoint::new(point.x.into(), point.y.into(), duration))
+                .push(SwipePoint::new(point.x.into(), point.y.into(), duration));
         }
     }
 }
