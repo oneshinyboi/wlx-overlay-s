@@ -4,7 +4,6 @@ use std::{
     process::{Child, Command},
     sync::{Arc, atomic::Ordering},
 };
-use std::sync::mpsc::Receiver;
 
 use crate::overlays::toast::Toast;
 use crate::{
@@ -49,7 +48,7 @@ use wlx_common::{
 #[cfg(feature = "swipe-to-type")]
 use wlx_common::data_dir;
 use crate::overlays::keyboard::layout::KeyCapType;
-use crate::overlays::keyboard::swipe_type::SwipeTypingManager;
+use crate::overlays::keyboard::swipe_type::{PredictionSlot, SwipeTypingManager};
 
 pub mod builder;
 mod layout;
@@ -60,16 +59,29 @@ mod swipe_type;
 
 #[cfg(not(feature = "swipe-to-type"))]
 mod swipe_type {
-    use std::sync::mpsc::Receiver;
     use wgui::event::{DeviceBitmask, MouseButtonIndex};
     use glam::Vec2;
 
     pub struct SwipeTypingManager;
 
+    #[derive(Clone, Default)]
+    pub struct PredictionSlot;
+
+    #[allow(dead_code)] // stub used only to satisfy compilation when the feature is disabled
+    impl PredictionSlot {
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn set(&self, _value: Option<Vec<String>>) {}
+        pub fn take(&self) -> Option<Option<Vec<String>>> {
+            None
+        }
+    }
+
     #[allow(dead_code)] // stub used only to satisfy compilation when the feature is disabled
     impl SwipeTypingManager {
-        pub fn new(_model_folder: std::path::PathBuf) -> anyhow::Result<(Self, Receiver<Option<Vec<String>>>)> {
-            Ok((Self, std::sync::mpsc::sync_channel(1).1))
+        pub fn new(_model_folder: std::path::PathBuf) -> anyhow::Result<(Self, PredictionSlot)> {
+            Ok((Self, PredictionSlot))
         }
         pub fn add_swipe(&mut self, _within_key_pos_normalized: &Vec2, _key_label: char, _device: DeviceBitmask, _index: Option<MouseButtonIndex>) {}
         pub fn predict(&mut self) -> anyhow::Result<()> { Ok(()) }
@@ -138,7 +150,7 @@ pub fn create_keyboard(app: &mut AppState) -> anyhow::Result<OverlayWindowConfig
         keymap_switch_index: 0,
         keymap_switch_pending: false,
         swipe_typing_manager: None,
-        swipe_candidate_receiver: None,
+        swipe_candidate_slot: None,
     };
 
     let mut backend = KeyboardBackend {
@@ -176,9 +188,9 @@ pub fn create_keyboard(app: &mut AppState) -> anyhow::Result<OverlayWindowConfig
 #[cfg(feature = "swipe-to-type")]
 pub(self) fn init_swipe_type_manager(state: &mut KeyboardState, model_path: std::path::PathBuf) {
     match SwipeTypingManager::new(model_path) {
-        Ok((engine, receiver)) => {
+        Ok((engine, slot)) => {
             state.swipe_typing_manager = Some(engine);
-            state.swipe_candidate_receiver = Some(receiver);
+            state.swipe_candidate_slot = Some(slot);
         },
         Err(e) => {
             log::error!("Error occurred while trying to load swipe engine: {}", e);
@@ -504,7 +516,7 @@ struct KeyboardState {
     keymap_switch_index: usize,
     keymap_switch_pending: bool,
     swipe_typing_manager: Option<SwipeTypingManager>,
-    swipe_candidate_receiver: Option<Receiver<Option<Vec<String>>>>
+    swipe_candidate_slot: Option<PredictionSlot>
 }
 
 macro_rules! take_and_leave_default {
@@ -528,7 +540,7 @@ impl KeyboardState {
             keymap_switch_index: self.keymap_switch_index,
             keymap_switch_pending: false,
             swipe_typing_manager: None,
-            swipe_candidate_receiver: None,
+            swipe_candidate_slot: None,
         }
     }
 }

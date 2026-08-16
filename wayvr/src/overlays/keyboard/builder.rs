@@ -344,7 +344,7 @@ pub(super) fn create_keyboard_panel(
                     }
                     if !app.session.config.keyboard_swipe_to_type_enabled {
                         panel.state.swipe_typing_manager = None;
-                        panel.state.swipe_candidate_receiver = None;
+                        panel.state.swipe_candidate_slot = None;
 
                         super::prediction_bar::set_visible(panel, false);
                     }

@@ -33,8 +33,8 @@ pub(super) fn update(
 
     let anim_mult = app.wgui_theme.animation_mult;
 
-    if let Some(recv) = panel.state.swipe_candidate_receiver.as_mut()
-        && let Ok(candidates) = recv.try_recv()
+    if let Some(slot) = panel.state.swipe_candidate_slot.as_mut()
+        && let Some(candidates) = slot.take()
     {
         let predictions_root = panel
             .parser_state

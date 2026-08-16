@@ -4,7 +4,9 @@ use anyhow::{bail};
 use glam::Vec2;
 use std::mem;
 use std::path::PathBuf;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, channel, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use super_swipe_type::keyboard_manager::QwertyKeyboardGrid;
@@ -26,10 +28,49 @@ enum PredictionTask {
     },
     Shutdown,
 }
+#[derive(Clone)]
+pub struct PredictionSlot(Arc<PredictionSlotInner>);
+
+struct PredictionSlotInner {
+    present: AtomicBool,
+    value: Mutex<Option<Vec<String>>>,
+}
+
+impl PredictionSlot {
+    pub fn new() -> Self {
+        Self(Arc::new(PredictionSlotInner {
+            present: AtomicBool::new(false),
+            value: Mutex::new(None),
+        }))
+    }
+
+    pub fn set(&self, value: Option<Vec<String>>) {
+        *self.0.value.lock().unwrap() = value;
+        self.0.present.store(true, Ordering::Release);
+    }
+
+    /// Returns the latest pending value, if any, and clears the slot.
+    /// `Some(Some(words))` is a fresh prediction, `Some(None)` is an explicit
+    /// clear (mirrors the previous `send(None)`), `None` means nothing pending.
+    pub fn take(&self) -> Option<Option<Vec<String>>> {
+        if !self.0.present.swap(false, Ordering::Acquire) {
+            return None;
+        }
+        let value = self.0.value.lock().unwrap().take();
+        Some(value)
+    }
+}
+
+impl Default for PredictionSlot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct SwipeTypingManager {
     keyboard_gird: QwertyKeyboardGrid,
     current_swipe: Vec<SwipePoint>,
-    swipe_candidate_sender: SyncSender<Option<Vec<String>>>,
+    prediction_slot: PredictionSlot,
     prediction_task_sender: Sender<PredictionTask>,
     worker_thread: Option<JoinHandle<()>>,
     swipe_start_time: Option<Instant>,
@@ -89,12 +130,12 @@ impl SwipeTypingManager {
         app.hid_provider
             .set_modifiers_routed(app.wvr_server.as_mut(), original_keyboard_mods);
     }
-    pub fn new(model_path: PathBuf) -> anyhow::Result<(SwipeTypingManager, Receiver<Option<Vec<String>>>)> {
-        let (candidate_sender, candidate_receiver) = sync_channel(1);
+    pub fn new(model_path: PathBuf) -> anyhow::Result<(SwipeTypingManager, PredictionSlot)> {
+        let prediction_slot = PredictionSlot::new();
+        let worker_slot = prediction_slot.clone();
         let (task_sender, task_receiver) = channel::<PredictionTask>();
 
         // Spawn persistent worker thread
-        let worker_candidate_sender = candidate_sender.clone();
         let worker_thread = thread::spawn(move || {
             let mut swipe_engine = match SwipeOrchestrator::new_from_path(&model_path) {
                 Ok(engine) => engine,
@@ -115,7 +156,7 @@ impl SwipeTypingManager {
                                     .map(|c| c.word)
                                     .collect();
 
-                                let _ = worker_candidate_sender.send(Some(words));
+                                worker_slot.set(Some(words));
                             }
                             Err(e) => {
                                 log::error!("Prediction failed: {e}");
@@ -149,7 +190,7 @@ impl SwipeTypingManager {
             Self {
                 keyboard_gird: QwertyKeyboardGrid::new(),
                 current_swipe: Vec::new(),
-                swipe_candidate_sender: candidate_sender,
+                prediction_slot: prediction_slot.clone(),
                 prediction_task_sender: task_sender,
                 worker_thread: Some(worker_thread),
                 swipe_start_time: None,
@@ -160,7 +201,7 @@ impl SwipeTypingManager {
                 current_swipe_mouse_button_index: None,
                 last_swiped_word: None,
             },
-            candidate_receiver,
+            prediction_slot,
         ))
     }
 
@@ -184,7 +225,7 @@ impl SwipeTypingManager {
 
     pub fn reset(&mut self) {
         self.reset_swipe();
-        let _ = self.swipe_candidate_sender.send(None);
+        self.prediction_slot.set(None);
         self.last_swiped_word = None;
     }
 
