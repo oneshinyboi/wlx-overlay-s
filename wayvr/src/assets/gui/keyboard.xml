@@ -166,7 +166,7 @@
       <!-- title text="${name}" /-->
       <cell translation="BAR.TOGGLE_VISIBILITY" _press="::OverlayToggle ${name}" />
       <cell translation="BAR.RESET_POSITION" _press="::OverlayReset ${name}" />
-      <cell translation="BAR.CLOSE_MIRROR" _press="::OverlayDrop ${name}" />
+      <cell translation="BAR.CLOSE_OVERLAY" _press="::OverlayDrop ${name}" />
     </context_menu>
   </blueprint>
 
@@ -179,13 +179,23 @@
     </Button>
   </template>
 
+  <!-- mirror with a different icon -->
+  <template name="Passthru">
+    <Button macro="button_style" id="overlay_${idx}" tooltip_str="${name}" _context_name="${name}" _press_left="::ContextMenuOpen menu_mirror" _press_right="::OverlayToggle ${name}">
+      <sprite width="38" height="38" src_builtin="icons/landscape.svg" />
+      <div position="absolute" margin_top="5" margin_left="13">
+        <label text="${display}" size="20" weight="bold" parent_color="background" />
+      </div>
+    </Button>
+  </template>
+
   <blueprint name="menu_handsfree">
     <context_menu >
       <cell translation="BAR.HANDSFREE.NONE" _press="::HandsfreeMode None" _press2="::ContextMenuClose" />
       <cell translation="BAR.HANDSFREE.HMD" _press="::HandsfreeMode Hmd" _press2="::ContextMenuClose" />
       <cell translation="BAR.HANDSFREE.HMD_ONLY" _press="::HandsfreeMode HmdOnly" _press2="::ContextMenuClose" />
-      <cell translation="BAR.HANDSFREE.EYE_TRACKING" _press="::HandsfreeMode EyeTracking" _press2="::ContextMenuClose" />
-      <cell translation="BAR.HANDSFREE.EYE_ONLY" _press="::HandsfreeMode EyeTrackingOnly" _press2="::ContextMenuClose" />
+      <cell translation="BAR.HANDSFREE.EYE_TRACKING" _press="::HandsfreeMode EyeTracking" _press2="::ContextMenuClose" skip="${openvr}" />
+      <cell translation="BAR.HANDSFREE.EYE_ONLY" _press="::HandsfreeMode EyeTrackingOnly" _press2="::ContextMenuClose" skip="${openvr}" />
     </context_menu>
   </blueprint>
 
@@ -193,7 +203,8 @@
     <context_menu >
       <cell translation="BAR.EDIT_MODE_TOGGLE" _press="::EditToggle" _press2="::ContextMenuClose" />
       <cell translation="BAR.HANDSFREE.TITLE" _press="::ContextMenuOpen menu_handsfree" />
-      <cell translation="BAR.ADD_MIRROR" _press="::NewMirror" />
+      <cell translation="BAR.ADD_MIRROR" _press="::NewMirror" skip="${not_wayland}" />
+      <cell translation="BAR.ADD_PASSTHRU" _press="::NewPassthru" skip="${not_passthru}" />
       <cell translation="BAR.ADD_NEW_SET" _press="::AddSet" />
       <cell translation="BAR.DELETE_CURRENT_SET" _press="::DeleteSet" />
     </context_menu>
@@ -227,7 +238,7 @@
           <div id="panels_root" gap="6">
           </div>
           <VerticalSeparator />
-          <div id="apps_root" gap="6">
+          <div id="apps_root" gap="6" skip="${openvr}">
           </div>
         </div>
         <div id="tray_root" flex_direction="row" gap="10">

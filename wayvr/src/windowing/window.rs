@@ -64,6 +64,7 @@ pub enum OverlayCategory {
     Screen,
     Mirror,
     WayVR,
+    Passthru,
 }
 
 pub struct OverlayWindowConfig {
@@ -121,11 +122,11 @@ impl OverlayWindowConfig {
 
     /// only call this directly for `OverlayCategory::Internal`
     /// for anything else, use `OverlayTask::ToggleOverlay` instead
-    pub fn activate(&mut self, app: &mut AppState) {
+    pub fn activate(&mut self, app: &mut AppState, realign: bool) {
         log::debug!("activate {}", self.name.as_ref());
         self.dirty = true;
         self.active_state = Some(self.default_state.clone());
-        self.reset(app, true);
+        self.reset(app, realign);
     }
 
     /// only call this directly for `OverlayCategory::Internal`
@@ -154,22 +155,15 @@ impl OverlayWindowConfig {
             .unwrap_or(self.default_state.transform);
         let scale = scalar_scale(&cur_transform);
 
-        let (parent_transform, lerp, align_to_hmd) = match state.positioning {
-            Positioning::FollowHead { lerp } => (app.input_state.hmd, lerp, false),
-            Positioning::FollowHand {
-                hand,
+        let (target_transform, lerp) = match state.positioning {
+            Positioning::FollowHead { lerp } => (app.input_state.hmd * cur_transform, lerp),
+            Positioning::FollowHand { hand, lerp } => (
+                app.input_state.pointers[hand as usize].pose * cur_transform,
                 lerp,
-                align_to_hmd,
-            } => (
-                app.input_state.pointers[hand as usize].pose,
-                lerp,
-                align_to_hmd,
             ),
-            Positioning::Anchored => (app.anchor, 1.0, false),
-            _ => return,
+            Positioning::Anchored => (app.anchor * cur_transform, 1.0),
+            Positioning::Static | Positioning::Floating => (state.transform, 1.0), // STAGE space
         };
-
-        let target_transform = parent_transform * cur_transform;
 
         state.transform = match lerp {
             1.0 => target_transform,
@@ -191,7 +185,7 @@ impl OverlayWindowConfig {
             }
         };
 
-        if align_to_hmd {
+        if state.align_to_hmd {
             realign(
                 &mut state.transform,
                 &app.input_state.hmd,
@@ -232,17 +226,15 @@ impl OverlayWindowConfig {
             .saved_transform
             .unwrap_or(self.default_state.transform);
 
-        let (parent_transform, align_to_hmd) = match state.positioning {
-            Positioning::Floating | Positioning::FollowHead { .. } => (app.input_state.hmd, false),
-            Positioning::FollowHand {
-                hand, align_to_hmd, ..
-            } => (app.input_state.pointers[hand as usize].pose, align_to_hmd),
-            Positioning::Anchored => (app.anchor, false),
+        let parent_transform = match state.positioning {
+            Positioning::Floating | Positioning::FollowHead { .. } => app.input_state.hmd,
+            Positioning::FollowHand { hand, .. } => app.input_state.pointers[hand as usize].pose,
+            Positioning::Anchored => app.anchor,
             Positioning::Static => {
                 if hard_reset {
-                    (app.input_state.hmd, false)
+                    app.input_state.hmd
                 } else {
-                    (Affine3A::IDENTITY, false)
+                    Affine3A::IDENTITY
                 }
             }
         };
@@ -253,7 +245,7 @@ impl OverlayWindowConfig {
 
         state.transform = parent_transform * cur_transform;
 
-        if align_to_hmd || (state.grabbable && hard_reset) {
+        if state.align_to_hmd || (state.grabbable && hard_reset) {
             let scale = scalar_scale(&cur_transform);
             realign(
                 &mut state.transform,

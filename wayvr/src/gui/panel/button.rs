@@ -14,6 +14,7 @@ use wgui::{
         CallbackData, CallbackMetadata, EventCallback, EventListenerKind, MouseButtonIndex,
         StyleSetRequest,
     },
+    i18n::Translation,
     layout::Layout,
     log::LogErr,
     parser::{self, AttribPair, CustomAttribsInfoOwned, Fetchable, ParserState, TemplateParams},
@@ -552,7 +553,37 @@ pub(super) fn setup_custom_button<S: 'static>(
                     }
 
                     app.tasks
-                        .enqueue(TaskType::Overlay(OverlayTask::CleanupMirrors));
+                        .enqueue(TaskType::Overlay(OverlayTask::CleanupOverlays(
+                            OverlayCategory::Mirror,
+                        )));
+                    Ok(EventResult::Consumed)
+                }),
+                "::NewPassthru" => Box::new(move |_common, data, app, _| {
+                    if !test_button(data) || !test_duration(&button, app) {
+                        return Ok(EventResult::Pass);
+                    }
+
+                    let name = crate::overlays::passthrough::new_passthru_name(
+                        &app.session.config.spawn_overlays,
+                    );
+                    app.tasks.enqueue(TaskType::Overlay(OverlayTask::Spawn(
+                        OverlaySelector::Name(name.clone()),
+                        SpawnPos::Spread,
+                        Box::new(move |app| {
+                            Some(crate::overlays::passthrough::new_passthru(name, app))
+                        }),
+                    )));
+                    Ok(EventResult::Consumed)
+                }),
+                "::CleanupPassthrus" => Box::new(move |_common, data, app, _| {
+                    if !test_button(data) || !test_duration(&button, app) {
+                        return Ok(EventResult::Pass);
+                    }
+
+                    app.tasks
+                        .enqueue(TaskType::Overlay(OverlayTask::CleanupOverlays(
+                            OverlayCategory::Passthru,
+                        )));
                     Ok(EventResult::Consumed)
                 }),
                 "::PlayspaceReset" => Box::new(move |_common, data, app, _| {
@@ -583,13 +614,14 @@ pub(super) fn setup_custom_button<S: 'static>(
                     let now = Instant::now();
 
                     for i in 0..duration_secs {
+                        let text = globals.i18n().translate_and_replace(
+                            "TOAST.FIXING_FLOOR_IN_X_SECS",
+                            ("{SECONDS}", &format!("{}", duration_secs - i)),
+                        );
                         Toast::new(
                             ToastTopic::System,
-                            globals.i18n().translate_and_replace(
-                                "TOAST.FIXING_FLOOR_IN_X_SECS",
-                                ("{SECONDS}", &format!("{}", duration_secs - i)),
-                            ),
-                            "TOAST.ONE_CONTROLLER_ON_FLOOR".into(),
+                            Some(Translation::from_raw_text_string(text)),
+                            Translation::from_translation_key("TOAST.ONE_CONTROLLER_ON_FLOOR"),
                         )
                         .with_timeout(1.0)
                         .with_lerp_amount(1.0)
@@ -605,9 +637,13 @@ pub(super) fn setup_custom_button<S: 'static>(
                     app.tasks
                         .enqueue_at(TaskType::Playspace(PlayspaceTask::FixFloor), deadline);
 
-                    Toast::new(ToastTopic::System, "DONE".into(), String::new())
-                        .with_timeout(2.0)
-                        .submit_at(app, deadline);
+                    Toast::new(
+                        ToastTopic::System,
+                        Some(Translation::from_translation_key("DONE")),
+                        Translation::from_raw_text(""),
+                    )
+                    .with_timeout(2.0)
+                    .submit_at(app, deadline);
                     Ok(EventResult::Consumed)
                 }),
                 "::Shutdown" => Box::new(move |_common, data, app, _| {
@@ -803,7 +839,7 @@ fn shell_on_action(state: &ShellButtonState) -> anyhow::Result<()> {
         .arg(&state.exec)
         .stdout(Stdio::piped())
         .spawn()
-        .with_context(|| format!("Failed to run shell script: '{}'", &state.exec))?;
+        .with_context(|| format!("Failed to run shell script: '{}'", state.exec))?;
 
     mut_state.child = Some(child);
 

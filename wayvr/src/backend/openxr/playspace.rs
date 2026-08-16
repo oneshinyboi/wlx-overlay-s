@@ -27,15 +27,15 @@ pub(super) struct PlayspaceMover {
 }
 
 impl PlayspaceMover {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> Self {
         log::info!("Monado: using space offset API");
 
-        Ok(Self {
+        Self {
             drag: None,
             rotate: None,
             gravity: SpaceGravity::new(),
             playspace_state: load_playspace_state().unwrap_or_default(),
-        })
+        }
     }
 
     pub fn handle_task(
@@ -114,7 +114,11 @@ impl PlayspaceMover {
 
             space_transform.translation = offset;
 
+            let before_pose = data.pose;
             data.pose *= space_transform;
+            if !app.session.config.space_drag_affects_world {
+                playspace_common::shift_world(overlays, &mut app.anchor, &before_pose, &data.pose);
+            }
             data.hand_pose = new_hand;
 
             apply_offset(data.pose, &mut monado.ipc);
@@ -228,7 +232,9 @@ impl PlayspaceMover {
             let after_pose = Affine3A::from_translation(res.playspace_pos.into());
             apply_offset(after_pose, &mut monado.ipc);
 
-            playspace_common::shift_world(overlays, &mut app.anchor, &before_pose, &after_pose);
+            if !app.session.config.space_drag_affects_world {
+                playspace_common::shift_world(overlays, &mut app.anchor, &before_pose, &after_pose);
+            }
         }
     }
 
@@ -300,9 +306,11 @@ impl PlayspaceMover {
 
         self.gravity.reset();
 
-        let after =
-            Affine3A::from_rotation_translation(pose.orientation.into(), pose.position.into());
-        playspace_common::shift_world(overlays, anchor, &before, &after);
+        if !app.session.config.space_drag_affects_world {
+            let after =
+                Affine3A::from_rotation_translation(pose.orientation.into(), pose.position.into());
+            playspace_common::shift_world(overlays, anchor, &before, &after);
+        }
     }
 
     pub fn reset_offset(
@@ -338,8 +346,10 @@ impl PlayspaceMover {
         let offset = self.playspace_state.openxr_space_center;
         apply_offset(offset, &mut monado.ipc);
 
-        let after = offset;
-        playspace_common::shift_world(overlays, &mut app.anchor, &before, &after);
+        if !app.session.config.space_drag_affects_world {
+            let after = offset;
+            playspace_common::shift_world(overlays, &mut app.anchor, &before, &after);
+        }
     }
 
     pub fn fix_floor(
@@ -389,7 +399,10 @@ impl PlayspaceMover {
 
         let after =
             Affine3A::from_rotation_translation(pose.orientation.into(), pose.position.into());
-        playspace_common::shift_world(overlays, anchor, &before, &after);
+
+        if !app.session.config.space_drag_affects_world {
+            playspace_common::shift_world(overlays, anchor, &before, &after);
+        }
     }
 
     pub fn save_center(&mut self, monado: &mut Monado) {

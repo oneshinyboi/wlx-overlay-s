@@ -13,7 +13,7 @@ use wgui::{
 	widget::label::WidgetLabel,
 	windowing::context_menu,
 };
-use wlx_common::config::GeneralConfig;
+use wlx_common::{DesktopBackend, XrBackend, config::GeneralConfig, dash_interface::InterfaceFeats};
 
 pub fn options_category(
 	mp: &mut MacroParams,
@@ -272,6 +272,7 @@ where
 
 	let btn = mp.parser_state.fetch_component_as::<ComponentButton>(&id)?;
 	btn.on_click(Rc::new({
+		let feats = mp.feats;
 		let tasks = mp.tasks.clone();
 		move |_common, e: ButtonClickEvent| {
 			tasks.push(Task::OpenContextMenu(
@@ -280,6 +281,18 @@ where
 					.iter()
 					.filter_map(|item| {
 						if item.get_bool("Hidden").unwrap_or(false) {
+							return None;
+						}
+						if item
+							.get_str("Backend")
+							.is_some_and(|x| XrBackend::try_from(x).unwrap() != feats.xr_backend)
+						{
+							return None;
+						}
+						if item
+							.get_str("Desktop")
+							.is_some_and(|x| DesktopBackend::try_from(x).unwrap() != feats.desktop_backend)
+						{
 							return None;
 						}
 
@@ -404,4 +417,5 @@ pub struct MacroParams<'a> {
 	pub config: &'a mut GeneralConfig,
 	pub tasks: Tasks<settings::Task>,
 	pub idx: usize,
+	pub feats: InterfaceFeats,
 }

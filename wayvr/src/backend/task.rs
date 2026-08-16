@@ -6,11 +6,15 @@ use std::{
 };
 
 use serde::Deserialize;
+use strum::EnumIs;
 
 use crate::{
     backend::input,
     state::AppState,
-    windowing::{OverlaySelector, window::OverlayWindowConfig},
+    windowing::{
+        OverlaySelector,
+        window::{OverlayCategory, OverlayWindowConfig},
+    },
 };
 
 static TASK_AUTO_INCREMENT: AtomicUsize = AtomicUsize::new(0);
@@ -94,10 +98,12 @@ pub enum ToggleMode {
     Toggle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, EnumIs)]
 pub enum SpawnPos {
-    /// Always spawn at the designated pos
+    /// Always spawn at designated position
     Fixed,
+    /// Always spawn at designated position and orientation
+    FixedNoRealign,
     /// Automatically spread out for user experience
     Spread,
     /// Spawn relative to a different overlay
@@ -123,7 +129,7 @@ pub enum OverlayTask {
     ToggleEditMode,
     ToggleDashboard,
     ShowHide,
-    CleanupMirrors,
+    CleanupOverlays(OverlayCategory),
     GlobalChange(GlobalChange),
     Modify(OverlaySelector, Box<ModifyOverlayTask>),
     Spawn(OverlaySelector, SpawnPos, Box<CreateOverlayTask>),

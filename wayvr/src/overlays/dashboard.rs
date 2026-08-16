@@ -35,7 +35,6 @@ use libmonado::{ClientLogic, DeviceLogic};
 use crate::{
     RESTART, RUNNING,
     backend::{
-        XrBackend,
         input::{Haptics, HoverResult, PointerHit, PointerMode},
         task::{GlobalChange, OverlayTask, PlayspaceTask, TaskType, ToggleMode},
         wayvr::{
@@ -43,7 +42,7 @@ use crate::{
             window::WindowHandle,
         },
     },
-    config::save_settings,
+    config::{none_if_0, save_settings},
     ipc::ipc_server::{gen_args_vec, gen_env_vec},
     state::AppState,
     subsystem::hid::WheelDelta,
@@ -92,9 +91,10 @@ impl DashFrontend {
             interface: Box::new(interface),
             lang_provider: &WayVRLangProvider::from_config(&app.session.config),
             show_welcome: tutorial,
-            has_monado: matches!(app.xr_backend, XrBackend::OpenXR),
+            has_monado: app.feats.xr_backend.is_open_xr(),
             theme: app.wgui_theme.clone(),
-            color_palette: &*app.session.config.color_palette,
+            color_palette: &app.session.config.color_palette,
+            executor: app.executor.clone(),
         })?;
 
         frontend
@@ -213,18 +213,18 @@ impl OverlayBackend for DashFrontend {
         }
 
         // if we're grabbed, stop following the hmd
-        if let OverlayEventData::OverlayGrabbed { name, .. } = data {
-            if &*name == DASH_NAME {
-                self.tutorial = false;
-                app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
-                    OverlaySelector::Name(name),
-                    Box::new(|_app, owc| {
-                        if let Some(active_state) = owc.active_state.as_mut() {
-                            active_state.positioning = Positioning::Floating;
-                        }
-                    }),
-                )));
-            }
+        if let OverlayEventData::OverlayGrabbed { name, .. } = data
+            && &*name == DASH_NAME
+        {
+            self.tutorial = false;
+            app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+                OverlaySelector::Name(name),
+                Box::new(|_app, owc| {
+                    if let Some(active_state) = owc.active_state.as_mut() {
+                        active_state.positioning = Positioning::Floating;
+                    }
+                }),
+            )));
         }
 
         Ok(())
@@ -319,7 +319,7 @@ impl OverlayBackend for DashFrontend {
     }
 }
 
-fn tutorial_spawn_effect(app: &mut AppState) -> anyhow::Result<()> {
+fn tutorial_spawn_effect(app: &mut AppState) {
     let dash_name: Arc<str> = DASH_NAME.into();
 
     app.tasks.enqueue_at(
@@ -337,7 +337,7 @@ fn tutorial_spawn_effect(app: &mut AppState) -> anyhow::Result<()> {
                     grabbable: true,
                     interactable: true,
                     positioning: Positioning::FollowHead { lerp: 0.01 },
-                    curvature: Some(0.15),
+                    curvature: none_if_0(app.session.config.default_curvature),
                     alpha: 0.1,
                     ..Default::default()
                 });
@@ -360,13 +360,11 @@ fn tutorial_spawn_effect(app: &mut AppState) -> anyhow::Result<()> {
             Instant::now().add(Duration::from_millis(500 + 40 * i)),
         );
     }
-
-    Ok(())
 }
 
 pub fn create_dash_frontend(app: &mut AppState) -> anyhow::Result<OverlayWindowConfig> {
     if !app.session.config.tutorial_graduated {
-        tutorial_spawn_effect(app)?;
+        tutorial_spawn_effect(app);
     }
 
     Ok(OverlayWindowConfig {
@@ -376,7 +374,7 @@ pub fn create_dash_frontend(app: &mut AppState) -> anyhow::Result<OverlayWindowC
             grabbable: true,
             interactable: true,
             positioning: Positioning::Floating,
-            curvature: Some(0.15),
+            curvature: none_if_0(app.session.config.default_curvature),
             ..OverlayWindowState::default()
         },
         z_order: Z_ORDER_DASHBOARD,
@@ -401,8 +399,8 @@ impl DashInterface<AppState> for DashInterfaceLive {
             .windows
             .iter()
             .map(|(handle, win)| WvrWindow {
-                handle: WindowHandle::as_packet(&handle),
-                process_handle: ProcessHandle::as_packet(&win.process),
+                handle: WindowHandle::as_packet(handle),
+                process_handle: ProcessHandle::as_packet(win.process),
                 size_x: win.size_x,
                 size_y: win.size_y,
                 visible: win.visible,
@@ -459,7 +457,7 @@ impl DashInterface<AppState> for DashInterfaceLive {
                 params.icon.as_deref(),
                 params.userdata,
             )
-            .map(|x| x.as_packet())
+            .map(ProcessHandle::as_packet)
     }
 
     fn process_list(&mut self, app: &mut AppState) -> anyhow::Result<Vec<WvrProcess>> {
@@ -578,21 +576,7 @@ impl DashInterface<AppState> for DashInterfaceLive {
     }
 
     fn get_feats(&mut self, data: &mut AppState) -> dash_interface::InterfaceFeats {
-        dash_interface::InterfaceFeats {
-            openxr: matches!(data.xr_backend, XrBackend::OpenXR),
-            #[cfg(feature = "openxr")]
-            monado: data.monado_state.is_some(),
-            #[cfg(not(feature = "openxr"))]
-            monado: false,
-            #[cfg(feature = "whisper")]
-            whisper: true,
-            #[cfg(not(feature = "whisper"))]
-            whisper: false,
-            #[cfg(feature = "swipe-to-type")]
-            swipe_to_type: true,
-            #[cfg(not(feature = "swipe-to-type"))]
-            swipe_to_type: false,
-        }
+        data.feats
     }
 
     #[cfg(feature = "openxr")]
@@ -634,12 +618,12 @@ impl DashInterface<AppState> for DashInterfaceLive {
     }
 
     #[cfg(feature = "openxr")]
-    fn monado_client_focus(&mut self, app: &mut AppState, name: &str) -> anyhow::Result<()> {
+    fn monado_client_focus(&mut self, app: &mut AppState, client_id: i64) -> anyhow::Result<()> {
         let Some(monado) = &mut app.monado_state else {
             return Ok(()); // no monado available
         };
 
-        monado_client_focus(&mut monado.ipc, name)
+        monado_client_focus(&mut monado.ipc, client_id)
     }
 
     #[cfg(feature = "openxr")]
@@ -750,7 +734,7 @@ impl DashInterface<AppState> for DashInterfaceLive {
         anyhow::bail!("Not supported in this build.")
     }
     #[cfg(not(feature = "openxr"))]
-    fn monado_client_focus(&mut self, _: &mut AppState, _: &str) -> anyhow::Result<()> {
+    fn monado_client_focus(&mut self, _: &mut AppState, _: i64) -> anyhow::Result<()> {
         anyhow::bail!("Not supported in this build.")
     }
     #[cfg(not(feature = "openxr"))]
@@ -818,16 +802,15 @@ fn monado_list_clients_filtered(
 }
 
 #[cfg(feature = "openxr")]
-fn monado_client_focus(monado: &mut libmonado::Monado, name: &str) -> anyhow::Result<()> {
+fn monado_client_focus(monado: &mut libmonado::Monado, client_id: i64) -> anyhow::Result<()> {
     let clients = monado_list_clients_filtered(monado)?;
 
     for mut client in clients {
-        let client_name = client.name()?;
-        if client_name != name {
+        if client.id() != client_id as u32 {
             continue;
         }
 
-        log::info!("Monado focus set to {client_name}");
+        log::info!("Monado focus set to {client_id}");
         client.set_primary()?;
         return Ok(());
     }

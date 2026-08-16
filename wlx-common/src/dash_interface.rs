@@ -3,7 +3,7 @@ use wayvr_ipc::{
 	packet_server::{WvrProcess, WvrProcessHandle, WvrWindow, WvrWindowHandle},
 };
 
-use crate::{config::GeneralConfig, desktop_finder::DesktopFinder};
+use crate::{DesktopBackend, XrBackend, config::GeneralConfig, desktop_finder::DesktopFinder};
 
 #[derive(Clone)]
 pub struct MonadoClient {
@@ -47,10 +47,24 @@ pub enum DashPlayspaceTask {
 
 #[derive(Clone, Copy)]
 pub struct InterfaceFeats {
-	pub openxr: bool,
+	pub xr_backend: XrBackend,
+	pub desktop_backend: DesktopBackend,
 	pub monado: bool,
+	pub passthru: bool,
 	pub whisper: bool,
 	pub swipe_to_type: bool,
+}
+
+impl InterfaceFeats {
+	pub fn default_for_backend(xr_backend: XrBackend) -> Self {
+		Self {
+			xr_backend,
+			desktop_backend: DesktopBackend::Headless,
+			monado: false,
+			passthru: false,
+			whisper: false,
+		}
+	}
 }
 
 pub trait DashInterface<T> {
@@ -67,7 +81,7 @@ pub trait DashInterface<T> {
 	fn process_list(&mut self, data: &mut T) -> anyhow::Result<Vec<WvrProcess>>;
 	fn process_terminate(&mut self, data: &mut T, handle: WvrProcessHandle) -> anyhow::Result<()>;
 	fn monado_client_list(&mut self, data: &mut T, filtered: bool) -> anyhow::Result<Vec<MonadoClient>>;
-	fn monado_client_focus(&mut self, data: &mut T, name: &str) -> anyhow::Result<()>;
+	fn monado_client_focus(&mut self, data: &mut T, client_id: i64) -> anyhow::Result<()>;
 	fn monado_brightness_get(&mut self, data: &mut T) -> Option<f32>;
 	fn monado_brightness_set(&mut self, data: &mut T, brightness: f32) -> Option<()>;
 	fn monado_metrics_set_enabled(&mut self, data: &mut T, enabled: bool) -> bool;

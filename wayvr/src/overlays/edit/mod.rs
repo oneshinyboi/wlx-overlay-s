@@ -79,16 +79,15 @@ struct EditModeState {
 
 impl EditModeState {
     fn resize_end(&mut self, app: &mut AppState) {
-        match std::mem::replace(&mut self.resize, ResizeState::None) {
-            ResizeState::Active { overlay_id, .. } => {
-                app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
-                    OverlaySelector::Id(overlay_id),
-                    Box::new(|_app, owc| {
-                        owc.resizing = false;
-                    }),
-                )));
-            }
-            _ => {}
+        if let ResizeState::Active { overlay_id, .. } =
+            std::mem::replace(&mut self.resize, ResizeState::None)
+        {
+            app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+                OverlaySelector::Id(overlay_id),
+                Box::new(|_app, owc| {
+                    owc.resizing = false;
+                }),
+            )));
         }
     }
 }
@@ -312,25 +311,22 @@ impl OverlayBackend for EditModeBackendWrapper {
     ) {
         self.panel.on_pointer(app, hit, pressed);
 
-        match &mut self.panel.state.resize {
-            ResizeState::Start { overlay_id } => {
-                app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
-                    OverlaySelector::Id(*overlay_id),
-                    Box::new(|_app, owc| {
-                        owc.resizing = true;
-                    }),
-                )));
+        if let ResizeState::Start { overlay_id } = &mut self.panel.state.resize {
+            app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
+                OverlaySelector::Id(*overlay_id),
+                Box::new(|_app, owc| {
+                    owc.resizing = true;
+                }),
+            )));
 
-                let last_uv = hit.uv;
-                self.panel.state.resize = ResizeState::Active {
-                    overlay_id: *overlay_id,
-                    pointer: hit.pointer,
-                    start_uv: last_uv,
-                    last_uv: last_uv,
-                    last_extent: self.extent,
-                };
-            }
-            _ => {}
+            let last_uv = hit.uv;
+            self.panel.state.resize = ResizeState::Active {
+                overlay_id: *overlay_id,
+                pointer: hit.pointer,
+                start_uv: last_uv,
+                last_uv,
+                last_extent: self.extent,
+            };
         }
     }
     fn on_scroll(
@@ -508,7 +504,7 @@ fn make_edit_panel(app: &mut AppState) -> anyhow::Result<EditModeWrapPanel> {
                             return Ok(EventResult::Pass);
                         }
                         state.resize = ResizeState::Start {
-                            overlay_id: state.id.borrow().clone(),
+                            overlay_id: *state.id.borrow(),
                         };
                         Ok(EventResult::Consumed)
                     }),
@@ -608,7 +604,7 @@ fn reset_panel(
     let c = panel
         .parser_state
         .fetch_component_as::<ComponentCheckbox>("align_box")?;
-    c.set_checked(&mut com, state.positioning.get_align().unwrap_or(false));
+    c.set_checked(&mut com, state.align_to_hmd);
 
     let c = panel
         .parser_state
@@ -728,7 +724,7 @@ const fn cb_assign_additive(_app: &mut AppState, owc: &mut OverlayWindowConfig, 
 const fn cb_assign_align(_app: &mut AppState, owc: &mut OverlayWindowConfig, align: bool) {
     owc.dirty = true;
     let active_state = owc.active_state.as_mut().unwrap();
-    active_state.positioning = active_state.positioning.with_align(align);
+    active_state.align_to_hmd = align;
 }
 
 const fn cb_assign_global(_app: &mut AppState, owc: &mut OverlayWindowConfig, global: bool) {

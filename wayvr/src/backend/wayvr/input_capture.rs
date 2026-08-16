@@ -24,8 +24,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::subsystem::dbus::DbusConnector;
+
 const IGNORE_PREFIX: &str = "WayVR";
-const WATCHDOG_TIMEOUT: Duration = Duration::from_millis(5000);
+const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_TIMEOUT_MS: i32 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -293,6 +295,7 @@ enum ProcessResult {
     ReceiverGone,
 }
 
+#[allow(clippy::match_same_arms)]
 fn worker_main(
     command_rx: Receiver<Command>,
     event_tx: Sender<CapturedEvent>,
@@ -305,10 +308,7 @@ fn worker_main(
 
     let mut libinput = Libinput::new_with_udev(interface);
     if libinput.udev_assign_seat("seat0").is_err() {
-        let _ = init_tx.send(Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("failed to assign libinput seat"),
-        )));
+        let _ = init_tx.send(Err(io::Error::other("failed to assign libinput seat")));
         return;
     }
 
@@ -419,7 +419,7 @@ fn worker_main(
         };
 
         // SAFETY: poll_fd is valid for the duration of this call
-        let poll_result = unsafe { libc::poll(&mut poll_fd, 1, POLL_TIMEOUT_MS) };
+        let poll_result = unsafe { libc::poll(&raw mut poll_fd, 1, POLL_TIMEOUT_MS) };
 
         if poll_result < 0 {
             let error = io::Error::last_os_error();
@@ -451,16 +451,16 @@ fn worker_main(
         }
 
         for event in &mut libinput {
-            match process_libinput_event(
+            match process_libinput_event(ProcessLibinputEventParams {
                 event,
                 grabbed,
-                true,
-                &mut pending_grab,
-                &event_tx,
-                &mut runtime_devices,
-                &mut pointer_devices,
+                allow_deferred_grab: true,
+                pending_grab: &mut pending_grab,
+                event_tx: &event_tx,
+                runtime_devices: &mut runtime_devices,
+                pointer_devices: &mut pointer_devices,
                 pointer_accel,
-            ) {
+            }) {
                 ProcessResult::Continue => {}
                 ProcessResult::ForceUngrab => {
                     emergency_ungrab = true;
@@ -486,7 +486,18 @@ fn worker_main(
                     }
                 }
                 Err(error) => {
-                    log::warn!("Could not grab input devices after Super+Tab: {error}");
+                    //TODO: we can't easily translate it at this stage, i18n lies on a separate thread
+                    let _ = DbusConnector::notify_send(
+                        "WayVR",
+                        &format!(
+                            "Could not capture input! Linux user must be in 'input' group!\n Error: \n{error}"
+                        ),
+                        1,
+                        5000,
+                        0,
+                        true,
+                    );
+                    log::warn!("Could not grab input devices: {error}");
                 }
             }
         }
@@ -510,19 +521,27 @@ fn worker_main(
     }
 }
 
-fn process_libinput_event(
+struct ProcessLibinputEventParams<'a> {
     event: Event,
     grabbed: bool,
     allow_deferred_grab: bool,
-    pending_grab: &mut bool,
-    event_tx: &Sender<CapturedEvent>,
-    runtime_devices: &mut HashMap<LibinputDevice, RuntimeDeviceState>,
-    pointer_devices: &mut HashSet<LibinputDevice>,
+    pending_grab: &'a mut bool,
+    event_tx: &'a Sender<CapturedEvent>,
+    runtime_devices: &'a mut HashMap<LibinputDevice, RuntimeDeviceState>,
+    pointer_devices: &'a mut HashSet<LibinputDevice>,
     pointer_accel: PointerAccelConfig,
-) -> ProcessResult {
-    match event {
+}
+
+#[allow(clippy::similar_names)]
+fn process_libinput_event(par: ProcessLibinputEventParams) -> ProcessResult {
+    match par.event {
         Event::Device(event) => {
-            handle_device_event(event, runtime_devices, pointer_devices, pointer_accel);
+            handle_device_event(
+                event,
+                par.runtime_devices,
+                par.pointer_devices,
+                par.pointer_accel,
+            );
         }
         Event::Keyboard(KeyboardEvent::Key(event)) => {
             let code_u32 = event.key();
@@ -533,7 +552,7 @@ fn process_libinput_event(
 
             let pressed = event.key_state() == KeyState::Pressed;
             let device = event.device();
-            let state = runtime_devices.entry(device).or_default();
+            let state = par.runtime_devices.entry(device).or_default();
 
             if pressed {
                 state.pressed_keys.insert(code);
@@ -541,12 +560,12 @@ fn process_libinput_event(
                 state.pressed_keys.remove(&code);
             }
 
-            if !grabbed {
+            if !par.grabbed {
                 // while ungrabbed, arm an automatic grab that triggers after release
-                if allow_deferred_grab
+                if par.allow_deferred_grab
                     && key_combo_is_pressed(KeyCombo::GrabRelease, &state.pressed_keys)
                 {
-                    *pending_grab = true;
+                    *par.pending_grab = true;
                 }
 
                 return ProcessResult::Continue;
@@ -578,7 +597,8 @@ fn process_libinput_event(
                     state.active_combos.remove(&combo);
                 }
 
-                if event_tx
+                if par
+                    .event_tx
                     .send(CapturedEvent::KeyCombo {
                         combo,
                         pressed: combo_pressed,
@@ -589,17 +609,22 @@ fn process_libinput_event(
                 }
             }
 
-            if event_tx.send(CapturedEvent::Key { code, pressed }).is_err() {
+            if par
+                .event_tx
+                .send(CapturedEvent::Key { code, pressed })
+                .is_err()
+            {
                 return ProcessResult::ReceiverGone;
             }
         }
-        Event::Pointer(PointerEvent::Motion(event)) if grabbed => {
+        Event::Pointer(PointerEvent::Motion(event)) if par.grabbed => {
             let dx = event.dx();
             let dy = event.dy();
             let dx_raw = event.dx_unaccelerated();
             let dy_raw = event.dy_unaccelerated();
             if (dx != 0.0 || dy != 0.0)
-                && event_tx
+                && par
+                    .event_tx
                     .send(CapturedEvent::PointerMotion {
                         dx,
                         dy,
@@ -611,9 +636,10 @@ fn process_libinput_event(
                 return ProcessResult::ReceiverGone;
             }
         }
-        Event::Pointer(PointerEvent::Button(event)) if grabbed => {
+        Event::Pointer(PointerEvent::Button(event)) if par.grabbed => {
             let pressed = event.button_state() == ButtonState::Pressed;
-            if event_tx
+            if par
+                .event_tx
                 .send(CapturedEvent::PointerButton {
                     button: event.button(),
                     pressed,
@@ -623,7 +649,7 @@ fn process_libinput_event(
                 return ProcessResult::ReceiverGone;
             }
         }
-        Event::Pointer(PointerEvent::ScrollWheel(event)) if grabbed => {
+        Event::Pointer(PointerEvent::ScrollWheel(event)) if par.grabbed => {
             let horizontal = if event.has_axis(Axis::Horizontal) {
                 event.scroll_value_v120(Axis::Horizontal)
             } else {
@@ -635,13 +661,14 @@ fn process_libinput_event(
                 0.0
             };
 
-            let state = runtime_devices.entry(event.device()).or_default();
+            let state = par.runtime_devices.entry(event.device()).or_default();
             let horizontal_v120 = accumulate_v120(&mut state.horizontal_v120_remainder, horizontal);
             let vertical_v120 = accumulate_v120(&mut state.vertical_v120_remainder, vertical);
 
             // libinput already provides correct values unlike REL_WHEEL
             if (horizontal_v120 != 0 || vertical_v120 != 0)
-                && event_tx
+                && par
+                    .event_tx
                     .send(CapturedEvent::PointerAxis {
                         horizontal_v120,
                         vertical_v120,
@@ -712,16 +739,16 @@ fn drain_pending_libinput_events(
 
     let mut ignored = false;
     for event in libinput {
-        let _ = process_libinput_event(
+        let _ = process_libinput_event(ProcessLibinputEventParams {
             event,
-            false,
-            false,
-            &mut ignored,
+            grabbed: false,
+            allow_deferred_grab: false,
+            pending_grab: &mut ignored,
             event_tx,
             runtime_devices,
             pointer_devices,
             pointer_accel,
-        );
+        });
     }
 }
 
@@ -743,7 +770,7 @@ fn force_reopen_ungrabbed(
 
     libinput
         .resume()
-        .map_err(|()| io::Error::new(io::ErrorKind::Other, "failed to resume libinput context"))?;
+        .map_err(|()| io::Error::other("failed to resume libinput context"))?;
 
     drain_pending_libinput_events(
         libinput,
@@ -786,6 +813,7 @@ fn clear_transient_state(runtime_devices: &mut HashMap<LibinputDevice, RuntimeDe
     }
 }
 
+#[allow(clippy::float_cmp)]
 fn accumulate_v120(remainder: &mut f64, value: f64) -> i32 {
     if !value.is_finite() {
         return 0;
@@ -847,7 +875,7 @@ fn looks_like_mouse(device: &EvdevDevice, keys: &AttributeSetRef<KeyCode>) -> bo
             .any(|button| keys.contains(button))
 }
 
-fn mouse_buttons() -> [KeyCode; 8] {
+const fn mouse_buttons() -> [KeyCode; 8] {
     [
         KeyCode::BTN_LEFT,
         KeyCode::BTN_RIGHT,

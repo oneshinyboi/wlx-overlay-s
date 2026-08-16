@@ -237,7 +237,7 @@ fn anim_hover(anim_data: &mut crate::animation::CallbackData<'_>, pos: f32, pres
 	rect.params.border_color = box_border_color(pos > 0.0, pressed, disabled);
 }
 
-fn anim_hover_in(state: Rc<RefCell<State>>, data: Rc<Data>, anim_mult: f32) -> Animation {
+fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -> Animation {
 	let down = state.borrow().down;
 	Animation::new(
 		data.id_outer_box,
@@ -251,7 +251,7 @@ fn anim_hover_in(state: Rc<RefCell<State>>, data: Rc<Data>, anim_mult: f32) -> A
 	)
 }
 
-fn anim_hover_out(state: Rc<RefCell<State>>, data: Rc<Data>, anim_mult: f32) -> Animation {
+fn anim_hover_out(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -> Animation {
 	let down = state.borrow().down;
 	Animation::new(
 		data.id_outer_box,
@@ -461,20 +461,20 @@ pub fn construct(ess: &mut ConstructEssentials, params: Params) -> anyhow::Resul
 
 	// make checkbox interaction box larger by setting padding and negative margin
 	style.padding = taffy::Rect {
-		left: length(4.0),
-		right: length(8.0),
-		top: length(4.0),
-		bottom: length(4.0),
+		left: length(4.0_f32),
+		right: length(8.0_f32),
+		top: length(4.0_f32),
+		bottom: length(4.0_f32),
 	};
 
 	style.margin = taffy::Rect {
-		left: length(-4.0),
-		right: length(-8.0),
-		top: length(-4.0),
-		bottom: length(-4.0),
+		left: length(-4.0_f32),
+		right: length(-8.0_f32),
+		top: length(-4.0_f32),
+		bottom: length(-4.0_f32),
 	};
 	//style.align_self = Some(taffy::AlignSelf::Start); // do not stretch self to the parent
-	style.gap = length(4.0);
+	style.gap = length(4.0_f32);
 
 	let (round_5, round_8) = if params.radio_group.is_some() {
 		(WLength::Percent(1.0), WLength::Percent(1.0))
@@ -482,7 +482,7 @@ pub fn construct(ess: &mut ConstructEssentials, params: Params) -> anyhow::Resul
 		(WLength::Units(5.0), WLength::Units(8.0))
 	};
 
-	let color_checked = params.color_checked.unwrap_or(WguiColorName::Primary.into());
+	let color_checked = params.color_checked.unwrap_or_else(|| WguiColorName::Primary.into());
 
 	let (root, _) = ess.layout.add_child(
 		ess.parent,
@@ -512,7 +512,7 @@ pub fn construct(ess: &mut ConstructEssentials, params: Params) -> anyhow::Resul
 		}),
 		taffy::Style {
 			size: box_size,
-			padding: taffy::Rect::length(4.0),
+			padding: taffy::Rect::length(4.0_f32),
 			min_size: box_size,
 			max_size: box_size,
 			..Default::default()
@@ -523,17 +523,13 @@ pub fn construct(ess: &mut ConstructEssentials, params: Params) -> anyhow::Resul
 		outer_box.id,
 		WidgetRectangle::create(WidgetRectangleParams {
 			round: round_5,
-			color: if params.checked {
-				color_checked
-			} else {
-				COLOR_UNCHECKED.into()
-			},
+			color: if params.checked { color_checked } else { COLOR_UNCHECKED },
 			..Default::default()
 		}),
 		taffy::Style {
 			size: taffy::Size {
-				width: percent(1.0),
-				height: percent(1.0),
+				width: percent(1.0_f32),
+				height: percent(1.0_f32),
 			},
 			..Default::default()
 		},

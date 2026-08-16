@@ -440,12 +440,15 @@ impl WidgetState {
 				&& (scrolling_cur.y - scrolling_target.y).abs() < epsilon
 			{
 				*scrolling_cur = *scrolling_target;
+				perform_next_tick = false;
 			}
 		}
 
 		if perform_next_tick {
 			alterables.mark_tick(this_widget_id);
 			alterables.mark_redraw();
+		} else {
+			self.data.scrolling_cur_prev = self.data.scrolling_cur;
 		}
 	}
 
@@ -563,12 +566,12 @@ impl WidgetState {
 	}
 
 	// this is called before calling children of this widget
-	pub fn process_event_priority<'a>(
+	pub fn process_event_priority(
 		&mut self,
 		params: &mut EventParams,
 		widget_id: WidgetID,
 		event: &Event,
-		event_result: &'a mut EventResult,
+		event_result: &mut EventResult,
 	) -> anyhow::Result<EventResult> {
 		match &event {
 			Event::MouseCancel => {

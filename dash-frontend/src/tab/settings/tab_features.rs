@@ -74,14 +74,14 @@ impl SettingsTab for State {
 		for task in self.tasks.drain() {
 			match task {
 				Task::WhisperDownloadClosed => {
-					if let Some(model) = self.pending_whisper_download.take() {
-						if !whisper_model_path(model.file_name).exists() {
-							// download failed, set to selection to none
-							par.general_config.whisper_model = "".into();
-							par.config_change_kind.replace(ConfigChangeKind::Other);
-							// reload the tab
-							self.parent_tasks.push(ParentTask::SetTab(TabNameEnum::Features));
-						}
+					if let Some(model) = self.pending_whisper_download.take()
+						&& !whisper_model_path(model.file_name).exists()
+					{
+						// download failed, set to selection to none
+						par.general_config.whisper_model = "".into();
+						par.config_change_kind.replace(ConfigChangeKind::Other);
+						// reload the tab
+						self.parent_tasks.push(ParentTask::SetTab(TabNameEnum::Features));
 					}
 				}
 				Task::WhisperRemoveUnused => {
@@ -216,8 +216,7 @@ impl State {
 		options_checkbox(par.mp, c, SettingType::NotificationsEnabled)?;
 		options_checkbox(par.mp, c, SettingType::NotificationsSoundEnabled)?;
 		options_checkbox(par.mp, c, SettingType::KeyboardSoundEnabled)?;
-
-		if !par.feats.openxr || par.feats.monado {
+		if par.feats.xr_backend.is_open_vr() || par.feats.monado {
 			// monado or openvr
 			options_checkbox(par.mp, c, SettingType::BlockGameInput)?;
 			options_checkbox(par.mp, c, SettingType::BlockGameInputIgnoreWatch)?;
@@ -408,8 +407,8 @@ fn whisper_models_dropdown(mp: &mut MacroParams, parent: WidgetID) -> anyhow::Re
 
 	let mut params = TemplateParams::new();
 	params.insert("id", &id);
-	params.insert("translation", "APP_SETTINGS.WHISPER_MODEL".into());
-	params.insert("tooltip", "APP_SETTINGS.WHISPER_MODEL_HELP".into());
+	params.insert("translation", "APP_SETTINGS.WHISPER_MODEL");
+	params.insert("tooltip", "APP_SETTINGS.WHISPER_MODEL_HELP");
 
 	mp.parser_state
 		.instantiate_template(mp.doc_params, "DropdownButton", mp.layout, parent, params)?;

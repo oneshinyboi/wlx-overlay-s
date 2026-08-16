@@ -14,14 +14,13 @@ use wlx_common::windowing::{OverlayWindowState, Positioning};
 
 use crate::backend::task::{InputTask, OverlayTask};
 use crate::overlays::anchor::{ANCHOR_NAME, GRAB_HELP_NAME};
-use crate::overlays::keyboard::KEYBOARD_NAME;
 use crate::overlays::watch::WATCH_NAME;
 use crate::state::{AppSession, AppState};
 use crate::subsystem::hid::WheelDelta;
 use crate::subsystem::input::InputFocus;
 use crate::windowing::backend::OverlayEventData;
 use crate::windowing::manager::OverlayWindowManager;
-use crate::windowing::window::{self, OverlayWindowData, realign, scalar_scale};
+use crate::windowing::window::{self, OverlayCategory, OverlayWindowData, realign, scalar_scale};
 use crate::windowing::{OverlayID, OverlaySelector};
 
 use super::task::TaskType;
@@ -104,13 +103,13 @@ impl InputState {
     }
 
     pub fn apply_handsfree_action(&mut self, params: HandsfreeParams) {
-        fn set_true(v: &mut bool) {
+        const fn set_true(v: &mut bool) {
             *v = true;
         }
-        fn set_false(v: &mut bool) {
+        const fn set_false(v: &mut bool) {
             *v = false;
         }
-        fn toggle(v: &mut bool) {
+        const fn toggle(v: &mut bool) {
             *v = !*v;
         }
 
@@ -131,10 +130,10 @@ impl InputState {
             HandsfreeAction::Click => apply(&mut self.handsfree_state.click),
             HandsfreeAction::RightModifier => apply(&mut self.handsfree_state.click_modifier_right),
             HandsfreeAction::MiddleModifier => {
-                apply(&mut self.handsfree_state.click_modifier_middle)
+                apply(&mut self.handsfree_state.click_modifier_middle);
             }
             HandsfreeAction::Grab => apply(&mut self.handsfree_state.grab),
-        };
+        }
     }
 
     pub fn handle_task(&mut self, task: InputTask) {
@@ -281,6 +280,7 @@ pub struct InteractionState {
     pub hovered_id: Option<OverlayID>,
     pub should_block_input: bool,
     pub should_block_poses: bool,
+    pub kbd_block_activated: bool,
 }
 
 impl Default for InteractionState {
@@ -292,6 +292,7 @@ impl Default for InteractionState {
             hovered_id: None,
             should_block_input: false,
             should_block_poses: false,
+            kbd_block_activated: false,
         }
     }
 }
@@ -490,6 +491,7 @@ where
     if !pointer.tracked {
         pointer.interaction.should_block_input = false;
         pointer.interaction.should_block_poses = false;
+        pointer.interaction.kbd_block_activated = false;
         return (None, pending_haptics); // no hit
     }
 
@@ -554,7 +556,8 @@ where
 
         pointer.interaction.should_block_poses = state.block_input
             && app.session.config.block_poses_on_kbd_interaction
-            && hovered.config.name.as_ref() == KEYBOARD_NAME;
+            && hovered.config.category == OverlayCategory::Keyboard
+            && pointer.interaction.kbd_block_activated;
     } else {
         pointer.interaction.should_block_input = false;
         pointer.interaction.should_block_poses = false;
@@ -571,16 +574,16 @@ where
     // grab
     if grab_start && hovered_state.grabbable {
         update_focus(app, hovered.config.input_focus);
-        start_grab(
+        start_grab(StartGrabParams {
             idx,
-            hit.overlay,
-            hovered.config.name.clone(),
-            hovered.config.editing,
-            hovered_state,
+            id: hit.overlay,
+            name: hovered.config.name.clone(),
+            editing: hovered.config.editing,
+            state: hovered_state,
             app,
             edit_mode,
             grab_float,
-        );
+        });
         log::debug!("Hand {}: grabbed {}", hit.pointer, hovered.config.name);
         return (
             Some((hit, raw_hit)),
@@ -598,6 +601,9 @@ where
     let pointer = &mut app.input_state.pointers[hit.pointer];
     if pointer.now.click && !pointer.before.click {
         pointer.interaction.clicked_id = Some(hit.overlay);
+        if hovered.config.category == OverlayCategory::Keyboard {
+            pointer.interaction.kbd_block_activated = true;
+        }
         update_focus(app, hovered.config.input_focus);
         hovered.config.backend.on_pointer(app, &hit, true);
     } else if !pointer.now.click && pointer.before.click {
@@ -634,6 +640,7 @@ fn handle_no_hit<O>(
     let pointer = &mut app.input_state.pointers[pointer_idx];
     pointer.interaction.should_block_input = false;
     pointer.interaction.should_block_poses = false;
+    pointer.interaction.kbd_block_activated = false;
 
     // in case click released while not aiming at anything
     // send release event to overlay that was originally clicked
@@ -765,10 +772,8 @@ where
             continue;
         };
 
-        if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 {
-            if !overlay.config.resizing {
-                continue;
-            }
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) && !overlay.config.resizing {
+            continue;
         }
 
         let pointer_hit = PointerHit {
@@ -788,25 +793,29 @@ where
     (None, None)
 }
 
-fn start_grab(
+struct StartGrabParams<'a> {
     idx: usize,
     id: OverlayID,
     name: Arc<str>,
     editing: bool,
-    state: &mut OverlayWindowState,
-    app: &mut AppState,
+    state: &'a mut OverlayWindowState,
+    app: &'a mut AppState,
     edit_mode: bool,
     grab_float: bool,
-) {
-    let pointer = &mut app.input_state.pointers[idx];
+}
+
+fn start_grab(par: StartGrabParams) {
+    let (app, id, state) = (par.app, par.id, par.state);
+
+    let pointer = &mut app.input_state.pointers[par.idx];
 
     // Grab anchor if:
     // - grabbed overlay is Anchored
     // - not in editmode
     // - not using grab_float
     // - grabbing with one hand. (grabbing with the 2nd hand will grab the individual overlay instead)
-    let grab_anchor = !edit_mode
-        && !grab_float
+    let grab_anchor = !par.edit_mode
+        && !par.grab_float
         && !app.anchor_grabbed
         && matches!(state.positioning, Positioning::Anchored);
 
@@ -830,11 +839,18 @@ fn start_grab(
         OverlaySelector::Id(id),
         Box::new({
             let pos = state.positioning;
-            let name = name.clone();
+            let name = par.name.clone();
             move |app, o| {
                 let _ = o
                     .backend
-                    .notify(app, OverlayEventData::OverlayGrabbed { name, pos, editing })
+                    .notify(
+                        app,
+                        OverlayEventData::OverlayGrabbed {
+                            name,
+                            pos,
+                            editing: par.editing,
+                        },
+                    )
                     .inspect_err(|e| log::warn!("Error during Notify OverlayGrabbed: {e:?}"));
             }
         }),
@@ -844,7 +860,7 @@ fn start_grab(
     app.tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
         OverlaySelector::Name(ANCHOR_NAME.clone()),
         Box::new(|app, o| {
-            o.activate(app);
+            o.activate(app, true);
         }),
     )));
 
@@ -858,15 +874,19 @@ fn start_grab(
             Box::new(move |app, o| {
                 let _ = o
                     .backend
-                    .notify(app, OverlayEventData::OverlayGrabbed { name, pos, editing })
+                    .notify(
+                        app,
+                        OverlayEventData::OverlayGrabbed {
+                            name: par.name,
+                            pos,
+                            editing: par.editing,
+                        },
+                    )
                     .inspect_err(|e| log::warn!("Error during Notify OverlayGrabbed: {e:?}"));
 
-                o.default_state.positioning = Positioning::FollowHand {
-                    hand,
-                    lerp: 0.1,
-                    align_to_hmd: true,
-                };
-                o.activate(app);
+                o.default_state.positioning = Positioning::FollowHand { hand, lerp: 0.1 };
+                o.default_state.align_to_hmd = true;
+                o.activate(app, true);
             }),
         )));
     }
@@ -985,30 +1005,22 @@ where
             if &*overlay.config.name == WATCH_NAME {
                 // watch special: when dropped, follow the hand that wasn't grabbing
                 if let Some(overlay_state) = overlay.config.active_state.as_mut() {
+                    let align_to_hmd = overlay_state.align_to_hmd;
                     overlay_state.positioning = match overlay_state.positioning {
-                        Positioning::FollowHand {
-                            hand,
-                            lerp,
-                            align_to_hmd,
-                        } => match pointer.hand() {
+                        Positioning::FollowHand { hand, lerp } => match pointer.hand() {
                             Some(LeftRight::Left) => Positioning::FollowHand {
                                 hand: LeftRight::Right,
                                 lerp,
-                                align_to_hmd,
                             },
                             Some(LeftRight::Right) => Positioning::FollowHand {
                                 hand: LeftRight::Left,
                                 lerp,
-                                align_to_hmd,
                             },
-                            _ => Positioning::FollowHand {
-                                hand,
-                                lerp,
-                                align_to_hmd,
-                            },
+                            _ => Positioning::FollowHand { hand, lerp },
                         },
                         x => x,
                     };
+                    overlay_state.align_to_hmd = align_to_hmd;
                 }
             } else if overlay.config.global
                 && let Some(active_state) = overlay.config.active_state.as_ref()

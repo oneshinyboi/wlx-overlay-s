@@ -33,7 +33,7 @@ impl ScreenBackend {
         );
         Self::new_raw(
             screen.name.clone(),
-            app.xr_backend,
+            app.feats.xr_backend,
             CaptureType::Xshm,
             capture,
         )
@@ -56,7 +56,7 @@ pub fn create_screens_x11pw(app: &mut AppState) -> anyhow::Result<ScreenCreateDa
             .session
             .pw_tokens
             .arc_get("x11")
-            .map(|x| x.to_string().into()),
+            .map(|x| x.clone().into()),
         embed_mouse: !app.session.config.double_cursor_fix,
         allow_multiple: true,
         persist: true,
@@ -103,7 +103,7 @@ pub fn create_screens_x11pw(app: &mut AppState) -> anyhow::Result<ScreenCreateDa
 
             let mut backend = ScreenBackend::new_raw(
                 m.name.clone(),
-                app.xr_backend,
+                app.feats.xr_backend,
                 CaptureType::PipeWire,
                 new_wlx_capture!(
                     app.gfx_extras.queue_capture,

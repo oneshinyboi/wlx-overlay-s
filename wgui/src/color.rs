@@ -3,7 +3,7 @@ use strum::{EnumCount, EnumString};
 // Primary: button color
 // OnPrimary: text color placed on the Primary-colored button
 
-#[derive(Debug, Copy, Clone, EnumCount, EnumString)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, EnumCount, EnumString)]
 #[repr(usize)]
 #[strum(serialize_all = "snake_case")]
 pub enum WguiColorName {
@@ -26,7 +26,7 @@ pub enum WguiColorName {
 	Highlight,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct WguiNamedColor {
 	name: WguiColorName,
 	rgb_multiplier: f32,
@@ -43,7 +43,7 @@ pub enum ParentColor {
 	Ignore,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WguiColor {
 	Raw(drawing::Color),
 	Named(WguiNamedColor),
@@ -131,7 +131,7 @@ impl WguiColor {
 	/// Gets a matching foreground color from a background color
 	pub fn fg_color(&self) -> Option<Self> {
 		if let Self::Named(name) = self {
-			name.name.fg_color().map(|x| x.into())
+			name.name.fg_color().map(Into::into)
 		} else {
 			None
 		}
@@ -140,7 +140,7 @@ impl WguiColor {
 	/// Gets a matching background color from a foreground color
 	pub fn bg_color(&self) -> Option<Self> {
 		if let Self::Named(name) = self {
-			name.name.bg_color().map(|x| x.into())
+			name.name.bg_color().map(Into::into)
 		} else {
 			None
 		}
@@ -148,7 +148,7 @@ impl WguiColor {
 }
 
 impl WguiColorName {
-	pub fn fg_color(&self) -> Option<Self> {
+	pub const fn fg_color(&self) -> Option<Self> {
 		match self {
 			Self::Primary => Some(Self::OnPrimary),
 			Self::Secondary => Some(Self::OnSecondary),
@@ -161,7 +161,7 @@ impl WguiColorName {
 		}
 	}
 
-	pub fn bg_color(&self) -> Option<Self> {
+	pub const fn bg_color(&self) -> Option<Self> {
 		match self {
 			Self::OnPrimary => Some(Self::Primary),
 			Self::OnSecondary => Some(Self::Secondary),
@@ -203,6 +203,15 @@ impl Default for WguiColor {
 }
 
 impl WguiNamedColor {
+	pub const fn with_alpha(name: WguiColorName, alpha: f32) -> WguiNamedColor {
+		WguiNamedColor {
+			name,
+			rgb_multiplier: 1.0,
+			rgb_addition: 0.0,
+			alpha,
+		}
+	}
+
 	pub fn resolve(&self, palette: &WguiColorPalette) -> drawing::Color {
 		let mut color = palette[self.name];
 		if self.alpha != 1.0 {

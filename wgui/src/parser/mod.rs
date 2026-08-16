@@ -334,7 +334,7 @@ impl ParserState {
 
 		let mut cells = Vec::<context_menu::Cell>::new();
 
-		for child in el_context_menu.children() {
+		'children: for child in el_context_menu.children() {
 			match child.tag_name().name() {
 				"" => {}
 				"cell" => {
@@ -352,6 +352,13 @@ impl ParserState {
 							"tooltip" => tooltip = Some(Translation::from_translation_key(value)),
 							"tooltip_str" => tooltip = Some(Translation::from_raw_text(value)),
 							"action" => action_name = Some(value.into()),
+							"skip" => {
+								let resolved = replace_vars(value, template_params);
+								//FIXME: this is always empty
+								if &*resolved == "1" {
+									continue 'children;
+								}
+							}
 							other => {
 								if !other.starts_with('_') {
 									anyhow::bail!("unexpected \"{other}\" attribute");
@@ -515,7 +522,7 @@ impl ParserContext<'_> {
 	}
 
 	fn populate_extra_variables(&mut self, other: &HashMap<Rc<str>, Rc<str>>) {
-		for (k, v) in other.iter() {
+		for (k, v) in other {
 			self.data_local.var_map.insert(k.clone(), v.clone());
 		}
 	}
@@ -798,7 +805,7 @@ fn process_attrib(template_parameters: &TemplateParams, ctx: &ParserContext, key
 			Some(name) => AttribPair::new(key, name),
 			None => {
 				log::warn!("{}: undefined variable \"{value}\"", ctx.doc_params.path.get_str());
-				AttribPair::new(key, format!("undefined_{}", value))
+				AttribPair::new(key, format!("undefined_{value}"))
 			}
 		}
 	} else {
@@ -981,24 +988,16 @@ fn parse_widget_universal(ctx: &mut ParserContext, widget: &WidgetPair, attribs:
 fn parse_child<'a>(
 	file: &ParserFile,
 	ctx: &mut ParserContext,
-	parent_node: roxmltree::Node<'a, 'a>,
 	child_node: roxmltree::Node<'a, 'a>,
 	parent_id: WidgetID,
 ) -> anyhow::Result<()> {
 	let tag_name = child_node.tag_name().name();
-	match parent_node.attribute("ignore_in_mode") {
-		Some("dev") => {
-			if !ctx.doc_params.extra.dev_mode {
-				return Ok(()); // do not parse
-			}
+	if let Some(skip) = child_node.attribute("skip") {
+		let resolved = process_attrib(&file.template_parameters, ctx, "skip", skip).value;
+		//FIXME: this is always empty
+		if &*resolved == "1" {
+			return Ok(()); // do not parse this element
 		}
-		Some("live") => {
-			if ctx.doc_params.extra.dev_mode {
-				return Ok(()); // do not parse
-			}
-		}
-		Some(s) => ctx.print_invalid_attrib(tag_name, "ignore_in_mode", s),
-		_ => {}
 	}
 
 	let attribs = process_attribs(file, ctx, &child_node, false);
@@ -1117,7 +1116,7 @@ fn parse_children<'a>(
 	parent_id: WidgetID,
 ) -> anyhow::Result<()> {
 	for child_node in parent_node.children() {
-		parse_child(file, ctx, parent_node, child_node, parent_id)?;
+		parse_child(file, ctx, child_node, parent_id)?;
 	}
 
 	Ok(())

@@ -10,12 +10,16 @@ use input::OpenXrInputSource;
 use openxr as xr;
 use skybox::{Skybox, create_skybox};
 use vulkano::{Handle, VulkanObject};
-use wlx_common::overlays::{StereoMode, ToastTopic};
+use wgui::i18n::Translation;
+use wlx_common::{
+    dash_interface::InterfaceFeats,
+    overlays::{StereoMode, ToastTopic},
+};
 
 use crate::{
-    Args, FRAME_COUNTER, RUNNING,
+    Args, FRAME_COUNTER, RUNNING, XrBackend,
     backend::{
-        BackendError, XrBackend,
+        BackendError, RunParams,
         input::interact,
         openxr::{helpers::try_apply_chroma_key, lines::LinePool, overlay::OpenXrOverlayData},
         task::{OpenXrTask, OverlayTask, TaskType},
@@ -52,7 +56,7 @@ struct XrState {
 }
 
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
-pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
+pub fn openxr_run(args: &Args, params: RunParams) -> Result<(), BackendError> {
     let (xr_instance, system) = match helpers::init_xr() {
         Ok((xr_instance, system)) => (xr_instance, system),
         Err(e) => {
@@ -63,9 +67,17 @@ pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
         }
     };
 
+    let feats = InterfaceFeats {
+        passthru: xr_instance
+            .exts()
+            .fb_composition_layer_alpha_blend
+            .is_some(),
+        ..InterfaceFeats::default_for_backend(XrBackend::OpenXR)
+    };
+
     let mut app = {
         let (gfx, gfx_extras) = init_openxr_graphics(xr_instance.clone(), system)?;
-        AppState::from_graphics(gfx, gfx_extras, XrBackend::OpenXR)?
+        AppState::from_graphics(gfx, gfx_extras, feats, params)?
     };
 
     app.session.no_autostart = args.no_autostart;
@@ -88,11 +100,7 @@ pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
 
     app.late_init();
 
-    let mut playspace_mover = app.monado_state.as_mut().and_then(|m| {
-        playspace::PlayspaceMover::new()
-            .map_err(|e| log::warn!("Will not use Monado playspace mover: {e}"))
-            .ok()
-    });
+    let mut playspace_mover = playspace::PlayspaceMover::new();
 
     let mut blocker = app
         .monado_state
@@ -294,9 +302,7 @@ pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
                 .enqueue(TaskType::Overlay(OverlayTask::ToggleDashboard));
         }
 
-        if let Some(ref mut playspace_mover) = playspace_mover {
-            playspace_mover.update(&mut overlays, &mut app);
-        }
+        playspace_mover.update(&mut overlays, &mut app);
 
         for o in overlays.values_mut() {
             o.after_input(&mut app)?;
@@ -317,8 +323,12 @@ pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
         if (app.input_state.ipd - ipd).abs() > 0.05 {
             log::info!("IPD changed: {} -> {}", app.input_state.ipd, ipd);
             app.input_state.ipd = ipd;
-            Toast::new(ToastTopic::IpdChange, "IPD".into(), format!("{ipd:.1} mm"))
-                .submit(&mut app);
+            Toast::new(
+                ToastTopic::IpdChange,
+                Some(Translation::from_raw_text("IPD")),
+                Translation::from_raw_text_string(format!("{ipd:.1} mm")),
+            )
+            .submit(&mut app);
         }
 
         overlays.values_mut().for_each(|o| o.config.tick(&mut app));
@@ -345,7 +355,7 @@ pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
 
         let watch = overlays.mut_by_id(watch_id).unwrap(); // want panic
         if watch.config.active_state.is_none() {
-            watch.config.activate(&mut app);
+            watch.config.activate(&mut app, true);
         }
         let watch_state = watch.config.active_state.as_mut().unwrap();
         let watch_transform = watch_state.transform;
@@ -483,9 +493,7 @@ pub fn openxr_run(args: &Args) -> Result<(), BackendError> {
                     overlays.handle_task(&mut app, task)?;
                 }
                 TaskType::Playspace(task) => {
-                    if let Some(playspace_mover) = playspace_mover.as_mut() {
-                        playspace_mover.handle_task(&mut app, &mut overlays, task);
-                    }
+                    playspace_mover.handle_task(&mut app, &mut overlays, task);
                 }
                 TaskType::OpenXR(task) => {
                     if matches!(task, OpenXrTask::EnvironmentChanged) {

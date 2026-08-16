@@ -1,5 +1,5 @@
 use std::{rc::Rc, time::Duration};
-use std::collections::HashMap;
+
 use crate::{
     app_misc,
     gui::{
@@ -188,6 +188,10 @@ pub(super) fn update_swipe_prediction_bar(
     }
     Ok(elements_changed)
 }
+fn bool_to_rc_str(val: bool) -> Rc<str> {
+    if val { "1" } else { "0" }.into()
+}
+
 #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
 pub(super) fn create_keyboard_panel(
     app: &mut AppState,
@@ -195,8 +199,20 @@ pub(super) fn create_keyboard_panel(
     state: KeyboardState,
     layout: &layout::Layout,
 ) -> anyhow::Result<GuiPanel<KeyboardState>> {
-    let mut panel =
-        GuiPanel::new_from_template(app, "gui/keyboard.xml", state, NewGuiPanelParams::default())?;
+    let mut params = NewGuiPanelParams::default();
+    params.extra_vars.insert(
+        "openvr".into(),
+        bool_to_rc_str(app.feats.xr_backend.is_open_vr()),
+    );
+    params
+        .extra_vars
+        .insert("not_passthru".into(), bool_to_rc_str(!app.feats.passthru));
+    params.extra_vars.insert(
+        "not_wayland".into(),
+        bool_to_rc_str(!app.feats.desktop_backend.is_wayland()),
+    );
+
+    let mut panel = GuiPanel::new_from_template(app, "gui/keyboard.xml", state, params)?;
 
     let doc_params = new_doc_params(&mut panel);
 
@@ -230,7 +246,13 @@ pub(super) fn create_keyboard_panel(
                 height: length(PIXELS_PER_UNIT),
             };
 
-            let Some(key) = layout.get_key_data(keymap, has_altgr, col, row) else {
+            let Some(key) = layout.get_key_data(
+                keymap,
+                has_altgr,
+                col,
+                row,
+                &app.session.config.keyboard_layouts,
+            ) else {
                 let _ = panel.layout.add_child(
                     div.id,
                     WidgetDiv::create(),
@@ -605,7 +627,7 @@ fn on_enter_anim(
             let rect = data.obj.get_as_mut::<WidgetRectangle>().unwrap();
             set_anim_color(&common.globals().palette, &key_state, rect, data.pos);
 
-            for child in key_state.labels.iter() {
+            for child in &key_state.labels {
                 let mut widget = common
                     .state
                     .widgets
@@ -618,7 +640,7 @@ fn on_enter_anim(
                 widget.set_color(common, color, true);
             }
 
-            for child in key_state.sprites.iter() {
+            for child in &key_state.sprites {
                 let mut widget = common
                     .state
                     .widgets
@@ -653,7 +675,7 @@ fn on_leave_anim(
             let rect = data.obj.get_as_mut::<WidgetRectangle>().unwrap();
             set_anim_color(&common.globals().palette, &key_state, rect, 1.0 - data.pos);
 
-            for child in key_state.labels.iter() {
+            for child in &key_state.labels {
                 let color = child.base_color.lerp(
                     &common.globals().palette,
                     &HOVER_TEXT_COLOR,
@@ -667,7 +689,7 @@ fn on_leave_anim(
                 widget.set_color(common, color, true);
             }
 
-            for child in key_state.sprites.iter() {
+            for child in &key_state.sprites {
                 let color = child.base_color.lerp(
                     &common.globals().palette,
                     &HOVER_TEXT_COLOR,

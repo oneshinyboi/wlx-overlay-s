@@ -339,6 +339,10 @@ pub(crate) enum SettingType {
 	CaptureMethod,
 	ClickFreezeTimeMs,
 	Clock12h,
+	DefaultCurvature,
+	DefaultOpacity,
+	DefaultOverlayScale,
+	DefaultPositioning,
 	DoubleCursorFix,
 	EnableWatch,
 	FocusFollowsMouseMode,
@@ -359,7 +363,6 @@ pub(crate) enum SettingType {
 	LongPressDuration,
 	NotificationsEnabled,
 	NotificationsSoundEnabled,
-	DefaultOverlayScale,
 	OpaqueBackground,
 	MouseAcceleration,
 	PointerLerpFactor,
@@ -435,6 +438,8 @@ impl SettingType {
 
 	pub fn mut_f32(self, config: &mut GeneralConfig) -> &mut f32 {
 		match self {
+			Self::DefaultCurvature => &mut config.default_curvature,
+			Self::DefaultOpacity => &mut config.default_opacity,
 			Self::DefaultOverlayScale => &mut config.default_overlay_scale,
 			Self::GridOpacity => &mut config.grid_opacity,
 			Self::LongPressDuration => &mut config.long_press_duration,
@@ -469,6 +474,10 @@ impl SettingType {
 			Self::CaptureMethod => {
 				config.capture_method = wlx_common::config::CaptureMethod::from_str(value).expect("Invalid enum value!")
 			}
+			Self::DefaultPositioning => {
+				config.default_positioning =
+					wlx_common::config::DefaultPositioning::from_str(value).expect("Invalid enum value!")
+			}
 			Self::InputCaptureMethod => {
 				config.wvr_input_capture = wlx_common::config::InputCaptureMethod::from_str(value).expect("Invalid enum value!")
 			}
@@ -496,6 +505,7 @@ impl SettingType {
 	fn get_enum_title(self, config: &mut GeneralConfig) -> Translation {
 		match self {
 			Self::CaptureMethod => Self::get_enum_title_inner(config.capture_method),
+			Self::DefaultPositioning => Self::get_enum_title_inner(config.default_positioning),
 			Self::InputCaptureMethod => Self::get_enum_title_inner(config.wvr_input_capture),
 			Self::InputEmulationMethod => Self::get_enum_title_inner(config.input_emulation_method),
 			Self::KeyboardMiddleClick => Self::get_enum_title_inner(config.keyboard_middle_click_mode),
@@ -538,7 +548,10 @@ impl SettingType {
 			Self::CaptureMethod => Ok("APP_SETTINGS.CAPTURE_METHOD"),
 			Self::ClickFreezeTimeMs => Ok("APP_SETTINGS.CLICK_FREEZE_TIME_MS"),
 			Self::Clock12h => Ok("APP_SETTINGS.CLOCK_12H"),
+			Self::DefaultCurvature => Ok("APP_SETTINGS.DEFAULT_CURVATURE"),
+			Self::DefaultOpacity => Ok("APP_SETTINGS.DEFAULT_OPACITY"),
 			Self::DefaultOverlayScale => Ok("APP_SETTINGS.DEFAULT_OVERLAY_SCALE"),
+			Self::DefaultPositioning => Ok("APP_SETTINGS.DEFAULT_POSITIONING"),
 			Self::DoubleCursorFix => Ok("APP_SETTINGS.DOUBLE_CURSOR_FIX"),
 			Self::FocusFollowsMouseMode => Ok("APP_SETTINGS.FOCUS_FOLLOWS_MOUSE_MODE"),
 			Self::GridOpacity => Ok("APP_SETTINGS.GRID_OPACITY"),
@@ -596,7 +609,10 @@ impl SettingType {
 			Self::BlockGameInputIgnoreWatch => Some("APP_SETTINGS.BLOCK_GAME_INPUT_IGNORE_WATCH_HELP"),
 			Self::BlockPosesOnKbdInteraction => Some("APP_SETTINGS.BLOCK_POSES_ON_KBD_INTERACTION_HELP"),
 			Self::CaptureMethod => Some("APP_SETTINGS.CAPTURE_METHOD_HELP"),
+			Self::DefaultCurvature => Some("APP_SETTINGS.OVERLAY_DEFAULTS_HELP"),
+			Self::DefaultOpacity => Some("APP_SETTINGS.OVERLAY_DEFAULTS_HELP"),
 			Self::DefaultOverlayScale => Some("APP_SETTINGS.DEFAULT_OVERLAY_SCALE_HELP"),
+			Self::DefaultPositioning => Some("APP_SETTINGS.OVERLAY_DEFAULTS_HELP"),
 			Self::DoubleCursorFix => Some("APP_SETTINGS.DOUBLE_CURSOR_FIX_HELP"),
 			Self::GridOpacity => Some("APP_SETTINGS.GRID_OPACITY_HELP"),
 			Self::HandsfreeAltTab => Some("APP_SETTINGS.HANDSFREE_ALT_TAB_HELP"),
@@ -653,7 +669,7 @@ pub fn horiz_cell(layout: &mut Layout, parent: WidgetID) -> anyhow::Result<Widge
 		taffy::Style {
 			flex_direction: taffy::FlexDirection::Row,
 			align_items: Some(taffy::AlignItems::CENTER),
-			gap: length(8.0),
+			gap: length(8.0_f32),
 			..Default::default()
 		},
 	)?;
@@ -711,6 +727,7 @@ impl<T> TabSettings<T> {
 			config: frontend.interface.general_config(data),
 			tasks: self.tasks.clone(),
 			idx: 9001,
+			feats,
 		};
 
 		let settings_mount_params = SettingsMountParams {
@@ -764,7 +781,7 @@ impl<T> TabSettings<T> {
 		let tasks = Tasks::default();
 		let tabs = parser_state.fetch_component_as::<ComponentTabs>("tabs")?;
 
-		if !frontend.interface.get_feats(data).openxr {
+		if !frontend.interface.get_feats(data).xr_backend.is_open_xr() {
 			let skybox_btn = tabs.get_tab_button("skybox").unwrap();
 			frontend
 				.layout

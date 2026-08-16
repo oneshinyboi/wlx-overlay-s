@@ -12,7 +12,7 @@ use wgui::{
 use wlx_common::{
     data_dir,
     overlays::{BackendAttrib, BackendAttribValue, ToastTopic},
-    windowing::{OverlayWindowState, Positioning},
+    windowing::OverlayWindowState,
 };
 
 use crate::{
@@ -37,6 +37,8 @@ use crate::{
         window::{OverlayCategory, OverlayWindowConfig},
     },
 };
+#[cfg(feature = "wayland")]
+use wlx_common::DesktopBackend;
 
 const WHISPER_NAME: &str = "whisper";
 
@@ -65,23 +67,19 @@ impl WhisperState {
                 }
             }
         }
-        return false;
+        false
     }
 }
 
-pub fn create_whisper(
-    app: &mut AppState,
-    headless: bool,
-    wayland: bool,
-) -> anyhow::Result<OverlayWindowConfig> {
-    let clipboard_provider: Option<Box<dyn ClipboardProvider>> = match (headless, wayland) {
+pub fn create_whisper(app: &mut AppState) -> anyhow::Result<OverlayWindowConfig> {
+    let clipboard_provider: Option<Box<dyn ClipboardProvider>> = match app.feats.desktop_backend {
         #[cfg(feature = "wayland")]
-        (false, true) => clipboard::wl::Provider::new()
+        DesktopBackend::Wayland => clipboard::wl::Provider::new()
             .log_err("Could not create Wayland clipboard provider")
             .ok()
             .map(|p| Box::new(p) as Box<dyn ClipboardProvider>),
         #[cfg(feature = "x11")]
-        (false, false) => clipboard::x11::Provider::new()
+        DesktopBackend::X11 => clipboard::x11::Provider::new()
             .log_err("Could not create X11 clipboard provider")
             .ok()
             .map(|p| Box::new(p) as Box<dyn ClipboardProvider>),
@@ -121,42 +119,45 @@ pub fn create_whisper(
                             return Ok(EventResult::Pass);
                         }
 
-                        let whisper = match app.whisper_sst.as_mut() {
-                            Some(x) => x,
-                            None => {
-                                let model_path = data_dir::get_path("whisper")
-                                    .join(app.session.config.whisper_model.as_ref());
-                                if model_path.is_file() {
-                                    app.whisper_sst = match WhisperStt::new(model_path)
-                                        .log_err("Error while starting Whisper engine")
-                                    {
-                                        Ok(x) => Some(x),
-                                        Err(e) => {
-                                            Toast::new(
-                                                ToastTopic::System,
-                                                "WHISPER.INIT_ERROR".into(),
-                                                e.to_string(),
-                                            )
-                                            .with_timeout(5.)
-                                            .with_sound(true)
-                                            .submit(app);
-                                            return Ok(EventResult::Consumed);
-                                        }
+                        let whisper = if let Some(x) = app.whisper_sst.as_mut() {
+                            x
+                        } else {
+                            let model_path = data_dir::get_path("whisper")
+                                .join(app.session.config.whisper_model.as_ref());
+                            if model_path.is_file() {
+                                app.whisper_sst = match WhisperStt::new(model_path)
+                                    .log_err("Error while starting Whisper engine")
+                                {
+                                    Ok(x) => Some(x),
+                                    Err(e) => {
+                                        Toast::new(
+                                            ToastTopic::System,
+                                            Some(Translation::from_translation_key(
+                                                "WHISPER.INIT_ERROR",
+                                            )),
+                                            Translation::from_raw_text_string(e.to_string()),
+                                        )
+                                        .with_timeout(5.)
+                                        .with_sound(true)
+                                        .submit(app);
+                                        return Ok(EventResult::Consumed);
                                     }
-                                } else {
-                                    Toast::new(
-                                        ToastTopic::System,
-                                        "WHISPER.MODEL_NOT_DOWNLOADED".into(),
-                                        "WHISPER.DOWNLOAD_GUIDANCE".into(),
-                                    )
-                                    .with_timeout(5.)
-                                    .with_sound(true)
-                                    .submit(app);
-                                    return Ok(EventResult::Consumed);
                                 }
-
-                                app.whisper_sst.as_mut().unwrap()
+                            } else {
+                                Toast::new(
+                                    ToastTopic::System,
+                                    Some(Translation::from_translation_key(
+                                        "WHISPER.MODEL_NOT_DOWNLOADED",
+                                    )),
+                                    Translation::from_translation_key("WHISPER.DOWNLOAD_GUIDANCE"),
+                                )
+                                .with_timeout(5.)
+                                .with_sound(true)
+                                .submit(app);
+                                return Ok(EventResult::Consumed);
                             }
+
+                            app.whisper_sst.as_mut().unwrap()
                         };
 
                         let _ = whisper
@@ -296,13 +297,13 @@ pub fn create_whisper(
 
     let on_label_tick: EventCallback<AppState, WhisperState> =
         Box::new(move |common, data, app, state| {
-            if let Some(whisper_stt) = app.whisper_sst.as_mut() {
-                if let Some(text) = whisper_stt.take_transcription() {
-                    let text: Rc<str> = text.into();
-                    state.last_transcription = Some(text.clone());
-                    let label = data.obj.get_as_mut::<WidgetLabel>().unwrap();
-                    label.set_text(common, Translation::from_raw_text_rc(text));
-                }
+            if let Some(whisper_stt) = app.whisper_sst.as_mut()
+                && let Some(text) = whisper_stt.take_transcription()
+            {
+                let text: Rc<str> = text.into();
+                state.last_transcription = Some(text.clone());
+                let label = data.obj.get_as_mut::<WidgetLabel>().unwrap();
+                label.set_text(common, Translation::from_raw_text_rc(text));
             }
             Ok(EventResult::Pass)
         });
@@ -315,6 +316,7 @@ pub fn create_whisper(
 
     panel.update_layout(app)?;
 
+    #[allow(clippy::unreadable_literal)]
     let transform = Affine3A::from_cols_array_2d(&[
         [0.49993715, -0.00020921684, -0.008030709],
         [-0.0021463279, 0.47818363, -0.14607349],
@@ -328,7 +330,8 @@ pub fn create_whisper(
             interactable: true,
             grabbable: true,
             transform,
-            positioning: Positioning::Anchored,
+            positioning: app.session.config.default_positioning.into(),
+            alpha: app.session.config.default_opacity,
             ..OverlayWindowState::default()
         },
         category: OverlayCategory::BuiltInPanel,

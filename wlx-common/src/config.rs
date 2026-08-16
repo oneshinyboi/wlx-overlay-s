@@ -25,18 +25,34 @@ pub enum CaptureMethod {
 	Auto,
 
 	#[serde(alias = "pipewire")]
-	#[strum(props(Text = "PipeWire GPU", Tooltip = "APP_SETTINGS.OPTION.PIPEWIRE_HELP"))]
+	#[strum(props(
+		Text = "PipeWire GPU",
+		Tooltip = "APP_SETTINGS.OPTION.PIPEWIRE_HELP",
+		Desktop = "Wayland"
+	))]
 	PipeWire,
 
-	#[strum(props(Text = "ScreenCopy GPU", Tooltip = "APP_SETTINGS.OPTION.SCREENCOPY_GPU_HELP"))]
+	#[strum(props(
+		Text = "ScreenCopy GPU",
+		Tooltip = "APP_SETTINGS.OPTION.SCREENCOPY_GPU_HELP",
+		Desktop = "Wayland"
+	))]
 	ScreenCopyGpu,
 
 	#[serde(alias = "pw-fallback")]
-	#[strum(props(Text = "PipeWire CPU", Tooltip = "APP_SETTINGS.OPTION.PW_FALLBACK_HELP"))]
+	#[strum(props(
+		Text = "PipeWire CPU",
+		Tooltip = "APP_SETTINGS.OPTION.PW_FALLBACK_HELP",
+		Desktop = "Wayland"
+	))]
 	PipeWireCpu,
 
 	#[serde(alias = "screencopy")]
-	#[strum(props(Text = "ScreenCopy CPU", Tooltip = "APP_SETTINGS.OPTION.SCREENCOPY_HELP"))]
+	#[strum(props(
+		Text = "ScreenCopy CPU",
+		Tooltip = "APP_SETTINGS.OPTION.SCREENCOPY_HELP",
+		Desktop = "Wayland"
+	))]
 	ScreenCopyCpu,
 }
 
@@ -51,7 +67,8 @@ pub enum InputEmulationMethod {
 
 	#[strum(props(
 		Translation = "APP_SETTINGS.OPTION.WL_VIRTUAL",
-		Tooltip = "APP_SETTINGS.OPTION.WL_VIRTUAL_HELP"
+		Tooltip = "APP_SETTINGS.OPTION.WL_VIRTUAL_HELP",
+		Desktop = "Wayland"
 	))]
 	WlVirtual,
 
@@ -73,6 +90,19 @@ pub enum InputCaptureMethod {
 		Tooltip = "APP_SETTINGS.OPTION.NONE_INPUT_CAPTURE_HELP"
 	))]
 	None,
+}
+
+#[derive(Default, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, EnumProperty, VariantArray)]
+pub enum DefaultPositioning {
+	#[default]
+	#[strum(props(Translation = "DEFINITIONS.ANCHORED", Tooltip = "APP_SETTINGS.OPTION.ANCHORED_HELP"))]
+	Anchored,
+
+	#[strum(props(Translation = "DEFINITIONS.FLOATING", Tooltip = "APP_SETTINGS.OPTION.FLOATING_HELP",))]
+	Floating,
+
+	#[strum(props(Translation = "DEFINITIONS.STATIC", Tooltip = "APP_SETTINGS.OPTION.STATIC_HELP"))]
+	Static,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, EnumProperty, VariantArray)]
@@ -97,9 +127,9 @@ pub enum HandsfreePointer {
 	Hmd,
 	#[strum(props(Translation = "APP_SETTINGS.OPTION.HMD_ONLY"))]
 	HmdOnly,
-	#[strum(props(Translation = "APP_SETTINGS.OPTION.EYE_PINCH"))]
+	#[strum(props(Translation = "APP_SETTINGS.OPTION.EYE_PINCH", Backend = "OpenXR"))]
 	EyeTracking,
-	#[strum(props(Translation = "APP_SETTINGS.OPTION.EYE_ONLY"))]
+	#[strum(props(Translation = "APP_SETTINGS.OPTION.EYE_ONLY", Backend = "OpenXR"))]
 	EyeTrackingOnly,
 }
 
@@ -108,7 +138,7 @@ pub enum HandsfreeAltTab {
 	#[strum(props(Translation = "APP_SETTINGS.OPTION.HMD_ONLY"))]
 	#[default]
 	Hmd,
-	#[strum(props(Translation = "APP_SETTINGS.OPTION.EYE_ONLY"))]
+	#[strum(props(Translation = "APP_SETTINGS.OPTION.EYE_ONLY", Backend = "OpenXR"))]
 	EyeTracking,
 }
 
@@ -253,6 +283,10 @@ const fn def_point3() -> f32 {
 	0.3
 }
 
+const fn def_point15() -> f32 {
+	0.15
+}
+
 const fn def_osc_port() -> u16 {
 	9000
 }
@@ -300,6 +334,9 @@ pub struct GeneralConfig {
 	pub ui_gradient_intensity: f32,
 
 	pub default_keymap: Option<String>,
+
+	#[serde(default)]
+	pub keyboard_layouts: Vec<Arc<str>>,
 
 	#[serde(default)]
 	pub attribs: AStrMap<Vec<BackendAttribValue>>,
@@ -455,7 +492,12 @@ pub struct GeneralConfig {
 	pub sets: Vec<SerializedWindowSet>,
 
 	#[serde(default)]
+	/// Obsolete, only used for reading
+	/// Use `sets` with `name: "global"`
 	pub global_set: SerializedWindowStates,
+
+	#[serde(default)]
+	pub spawn_overlays: Vec<Arc<str>>,
 
 	#[serde(default)]
 	pub autostart_apps: Vec<WvrProcessLaunchParams>,
@@ -516,4 +558,13 @@ pub struct GeneralConfig {
 
 	#[serde(default)]
 	pub wvr_input_capture: InputCaptureMethod,
+
+	#[serde(default)]
+	pub default_positioning: DefaultPositioning,
+
+	#[serde(default = "def_one")]
+	pub default_opacity: f32,
+
+	#[serde(default = "def_point15")]
+	pub default_curvature: f32,
 }

@@ -54,11 +54,11 @@ use std::{
 use vulkano::image::view::ImageView;
 use wayland_protocols::xdg::shell::server::xdg_toplevel;
 use wayvr_ipc::packet_client::PositionMode;
-use wgui::{gfx::WGfx, log::LogErr};
+use wgui::{gfx::WGfx, globals::WguiGlobals, log::LogErr};
 use wlx_capture::frame::Transform;
 use wlx_common::{
     audio::{AudioSystem, SamplePlayer},
-    config::{GeneralConfig, InputCaptureMethod},
+    config::{DefaultPositioning, GeneralConfig, InputCaptureMethod},
     desktop_finder::DesktopFinder,
 };
 use xkbcommon::xkb;
@@ -71,12 +71,14 @@ use crate::{
             image_importer::ImageImporter,
             input_capture::InputCapture,
             process::{KillSignal, Process},
+            window::CreateWindowParams,
         },
     },
     graphics::{ExtentExt, WGfxExtras},
     ipc::{event_queue::SyncEventQueue, ipc_server},
     overlays::{
         anchor::ALTTAB_HELP_NAME,
+        keyboard::KEYBOARD_NAME,
         wayvr::{WvrCommand, create_wl_window_overlay},
     },
     state::AppState,
@@ -149,7 +151,7 @@ pub struct WvrServerState {
     grab_toast_sent: bool,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MouseIndex {
     Left,
     Center,
@@ -309,6 +311,7 @@ impl WvrServerState {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::significant_drop_tightening)]
     pub fn tick_events(app: &mut AppState) -> anyhow::Result<Vec<TickTask>> {
         let mut tasks: Vec<TickTask> = Vec::new();
 
@@ -327,7 +330,7 @@ impl WvrServerState {
         // Tick all child processes
         let mut to_remove: SmallVec<[process::ProcessHandle; 2]> = SmallVec::new();
 
-        for (handle, process) in wvr_server.processes.iter_mut() {
+        for (handle, process) in &mut wvr_server.processes {
             if !process.is_running() {
                 to_remove.push(handle);
             }
@@ -401,22 +404,26 @@ impl WvrServerState {
                                 }
                                 _ => (
                                     Size::new(1920, 1080).clamp(min_size, max_size),
-                                    PositionMode::Float,
+                                    match app.session.config.default_positioning {
+                                        DefaultPositioning::Anchored => PositionMode::Anchor,
+                                        DefaultPositioning::Floating => PositionMode::Float,
+                                        DefaultPositioning::Static => PositionMode::Static,
+                                    },
                                     None,
                                     None,
                                     false,
                                 ),
                             };
 
-                        let window_handle = wvr_server.wm.create_window(
-                            toplevel.clone(),
-                            process_handle,
-                            output_bounds,
+                        let window_handle = wvr_server.wm.create_window(CreateWindowParams {
+                            toplevel: toplevel.clone(),
+                            process: process_handle,
+                            bounds: output_bounds,
                             min_size,
                             max_size,
-                            fallback_size.w as _,
-                            fallback_size.h as _,
-                        );
+                            size_x: fallback_size.w as _,
+                            size_y: fallback_size.h as _,
+                        });
 
                         toplevel.with_pending_state(|state| {
                             state.bounds = Some(output_bounds);
@@ -522,13 +529,14 @@ impl WvrServerState {
                             wvr_server.overlay_to_window.remove(oid);
 
                             if let Some(process_handle) = process_handle.as_ref() {
-                                let mut empty = false;
-                                if let Some(overlays) =
+                                let empty = if let Some(overlays) =
                                     wvr_server.process_overlays.get_mut(process_handle)
                                 {
                                     overlays.retain(|other| *other != oid);
-                                    empty = overlays.is_empty();
-                                }
+                                    overlays.is_empty()
+                                } else {
+                                    false
+                                };
 
                                 if empty {
                                     wvr_server.process_overlays.remove(process_handle);
@@ -607,7 +615,7 @@ impl WvrServerState {
                         continue;
                     }
 
-                    for (h, w) in wvr_server.wm.windows.iter() {
+                    for (h, w) in &wvr_server.wm.windows {
                         if w.process != process_handle {
                             continue;
                         }
@@ -646,6 +654,7 @@ impl WvrServerState {
             &mut app.hid_provider,
             &mut app.audio_sample_player,
             &mut app.audio_system,
+            &app.wgui_globals,
             &app.session.config,
         );
 
@@ -697,7 +706,7 @@ impl WvrServerState {
     pub fn process_removed(&mut self, tasks: &mut TaskContainer, process: process::ProcessHandle) {
         let mut to_remove = vec![];
 
-        for (hnd, win) in self.wm.windows.iter() {
+        for (hnd, win) in &self.wm.windows {
             if win.process != process {
                 continue;
             }
@@ -725,6 +734,7 @@ impl WvrServerState {
         self.window_to_overlay.get(&window).copied()
     }
 
+    #[allow(clippy::match_same_arms)]
     pub fn hit_target_to_focus(
         &self,
         target: WvrHitTarget,
@@ -733,18 +743,18 @@ impl WvrServerState {
     ) -> PointerFocusTarget {
         match target {
             WvrHitTarget::Panel(_) => PointerFocusTarget::None,
-            WvrHitTarget::Toplevel { .. } => self
-                .wm
-                .windows
-                .get(hover_window)
-                .map(|w| {
-                    let surface = w.toplevel.wl_surface().clone();
-                    PointerFocusTarget::Surface {
-                        surface,
-                        origin: glam::Vec2::ZERO,
-                    }
-                })
-                .unwrap_or(PointerFocusTarget::Toplevel),
+            WvrHitTarget::Toplevel { .. } => {
+                self.wm
+                    .windows
+                    .get(hover_window)
+                    .map_or(PointerFocusTarget::Toplevel, |w| {
+                        let surface = w.toplevel.wl_surface().clone();
+                        PointerFocusTarget::Surface {
+                            surface,
+                            origin: glam::Vec2::ZERO,
+                        }
+                    })
+            }
             WvrHitTarget::Surface {
                 surface, origin, ..
             } => PointerFocusTarget::Surface { surface, origin },
@@ -758,6 +768,7 @@ impl WvrServerState {
         self.manager.seat_pointer.is_grabbed()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn process_input_capture(
         &mut self,
         input_state: &mut InputState,
@@ -765,6 +776,7 @@ impl WvrServerState {
         hid_wrapper: &mut HidWrapper,
         audio_sample_player: &mut SamplePlayer,
         audio_system: &mut AudioSystem,
+        globals: &WguiGlobals,
         config: &GeneralConfig,
     ) {
         let input_capture = match (self.input_capture.as_mut(), config.wvr_input_capture) {
@@ -781,14 +793,10 @@ impl WvrServerState {
                 if let Some(cap) = self.input_capture.as_mut() {
                     cap
                 } else {
-                    let _ = DbusConnector::notify_send(
-                        "Could not initialize keyboard/mouse capture!",
-                        "Check that your user is in the input group.",
-                        1,
-                        5000,
-                        0,
-                        true,
-                    );
+                    let text = &globals
+                        .i18n()
+                        .translate("NOTIFICATION.CANNOT_CAPTURE_KBD_MOUSE");
+                    let _ = DbusConnector::notify_send("WayVR", text, 1, 5000, 0, true);
                     return;
                 }
             }
@@ -820,20 +828,43 @@ impl WvrServerState {
                             tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleEditMode));
                         } else if (hid::VirtualKey::D as u32) == vk && pressed {
                             tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleDashboard));
+                        } else if (hid::VirtualKey::T as u32) == vk && pressed {
+                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleOverlay(
+                                OverlaySelector::Name(KEYBOARD_NAME.into()),
+                                ToggleMode::Toggle,
+                            )));
                         } else if (hid::VirtualKey::R as u32) == vk && pressed {
                             tasks.enqueue(TaskType::Overlay(OverlayTask::ShowHide));
-                        } else if (hid::VirtualKey::N1 as u32) == vk && pressed {
-                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(0)))
-                        } else if (hid::VirtualKey::N2 as u32) == vk && pressed {
-                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(1)))
-                        } else if (hid::VirtualKey::N3 as u32) == vk && pressed {
-                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(2)))
-                        } else if (hid::VirtualKey::N4 as u32) == vk && pressed {
-                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(3)))
-                        } else if (hid::VirtualKey::N5 as u32) == vk && pressed {
-                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(4)))
-                        } else if (hid::VirtualKey::N6 as u32) == vk && pressed {
-                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(5)))
+                        } else if ((hid::VirtualKey::N1 as u32) == vk
+                            || (hid::VirtualKey::KP_1 as u32) == vk)
+                            && pressed
+                        {
+                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(0)));
+                        } else if ((hid::VirtualKey::N2 as u32) == vk
+                            || (hid::VirtualKey::KP_2 as u32) == vk)
+                            && pressed
+                        {
+                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(1)));
+                        } else if ((hid::VirtualKey::N3 as u32) == vk
+                            || (hid::VirtualKey::KP_3 as u32) == vk)
+                            && pressed
+                        {
+                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(2)));
+                        } else if ((hid::VirtualKey::N4 as u32) == vk
+                            || (hid::VirtualKey::KP_4 as u32) == vk)
+                            && pressed
+                        {
+                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(3)));
+                        } else if ((hid::VirtualKey::N5 as u32) == vk
+                            || (hid::VirtualKey::KP_5 as u32) == vk)
+                            && pressed
+                        {
+                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(4)));
+                        } else if ((hid::VirtualKey::N6 as u32) == vk
+                            || (hid::VirtualKey::KP_6 as u32) == vk)
+                            && pressed
+                        {
+                            tasks.enqueue(TaskType::Overlay(OverlayTask::ToggleSet(5)));
                         }
                     } else if self.has_input_focus {
                         self.manager.send_key(vk, pressed);
@@ -896,15 +927,8 @@ impl WvrServerState {
                     audio_sample_player.play_sample(audio_system, "input_grab");
                     if !self.grab_toast_sent {
                         self.grab_toast_sent = true;
-                        //TODO: toast
-                        let _ = DbusConnector::notify_send(
-                            "WayVR has your keyboard and mouse!",
-                            "Super+Z to release",
-                            1,
-                            5000,
-                            0,
-                            true,
-                        );
+                        let text = &globals.i18n().translate("NOTIFICATION.WE_ARE_GRABBING");
+                        let _ = DbusConnector::notify_send("WayVR", &text, 1, 5000, 0, true);
                     }
                 }
                 input_capture::CapturedEvent::Ungrabbed => {
@@ -928,7 +952,7 @@ impl WvrServerState {
                             tasks.enqueue(TaskType::Overlay(OverlayTask::Modify(
                                 OverlaySelector::Name(ALTTAB_HELP_NAME.clone()),
                                 Box::new(move |app, o| {
-                                    o.activate(app);
+                                    o.activate(app, true);
                                 }),
                             )));
                         } else {
@@ -968,16 +992,14 @@ impl WvrServerState {
                     let toplevel = window.toplevel.wl_surface().clone();
                     let inner_extent = with_states(&toplevel, |states| {
                         SurfaceBufWithImage::get_from_surface(states)
-                            .map(|s| s.image.extent_u32arr())
-                            .unwrap_or([1, 1])
+                            .map_or([1, 1], |s| s.image.extent_u32arr())
                     });
-                    let Some(hit_ctx) = build_hit_context(
+
+                    let hit_ctx = build_hit_context(
                         &toplevel,
                         &self.manager.state.popup_manager,
                         inner_extent,
-                    ) else {
-                        break 'mouse_update;
-                    };
+                    );
 
                     let new_x = (hover.pos.x + mouse_delta.x).clamp(0., inner_extent[0] as f64);
                     let new_y = (hover.pos.y + mouse_delta.y).clamp(0., inner_extent[1] as f64);
@@ -1005,7 +1027,7 @@ impl WvrServerState {
         }
     }
 
-    fn button_to_mouse_index(button: u32) -> Option<MouseIndex> {
+    const fn button_to_mouse_index(button: u32) -> Option<MouseIndex> {
         match button {
             272 => Some(MouseIndex::Left),
             273 => Some(MouseIndex::Right),
@@ -1015,18 +1037,18 @@ impl WvrServerState {
     }
 
     /// Use HidWrapper::set_input_focus instead!!!
-    pub fn set_input_focus(&mut self, has_focus: bool) {
+    pub const fn set_input_focus(&mut self, has_focus: bool) {
         self.has_input_focus = has_focus;
         if !has_focus {
             self.wm.mouse = None;
         }
     }
 
-    pub fn get_focused_window(&self) -> Option<window::WindowHandle> {
+    pub const fn get_focused_window(&self) -> Option<window::WindowHandle> {
         if !self.has_input_focus {
             return None;
         }
-        self.wm.keyboard_focus.clone()
+        self.wm.keyboard_focus
     }
 
     fn get_mouse_focus(

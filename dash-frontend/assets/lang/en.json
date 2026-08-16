@@ -1,4 +1,21 @@
 {
+	"DEFINITIONS": {
+		"ANCHORED": "Anchored",
+		"FLOATING": "Floating",
+		"STATIC": "Static",
+		"SET": "Set",
+		"WATCH": "Watch",
+		"DASHBOARD": "Dashboard",
+		"EDIT_MODE": "Edit Mode",
+		"SETTINGS": "Settings",
+		"KEYBOARD": "Keyboard",
+		"TASKBAR": "Taskbar",
+		"FEATURES": "Features",
+		"OVERLAY": "Overlay",
+		"SKYMAP": "Skymap",
+		"PLAYSPACE": "Playspace",
+		"D_PAD": "D-pad"
+	},
 	"ACTIONS": {
 		"RECENTER_PLAYSPACE": "Re-center playspace"
 	},
@@ -17,15 +34,6 @@
 			"CAGE": "Compatibility mode (Cage)",
 			"NATIVE": "Native mode"
 		},
-		"POS": {
-			"ANCHORED": "Anchored",
-			"ANCHORED_HELP": "Stays in place relative to center marker.",
-			"FLOATING": "Floating",
-			"FLOATING_HELP": "Moves independently, recenters on show.",
-			"STATIC": "Static",
-			"STATIC_HELP": "Not part of any set. Does not recenter."
-		},
-		"POS_TITLE": "Positioning",
 		"RES_TITLE": "Resolution"
 	},
 	"APP_SETTINGS": {
@@ -93,7 +101,7 @@
 		},
 		"BROWSE_ONLINE_CATALOG": "Browse online catalog...",
 		"BROWSE_SKYMAPS": "Browse skymaps",
-		"CAPTURE_METHOD": "Wayland screen capture",
+		"CAPTURE_METHOD": "Screen capture method",
 		"CAPTURE_METHOD_HELP": "Try changing this if you are\nexperiencing black or glitchy screens",
 		"COLOR_KEYING": "Color keying",
 		"COLOR_PALETTE": "Color palette",
@@ -117,6 +125,10 @@
 		"DOUBLE_CURSOR_FIX_HELP": "Enable this if you see 2 cursors",
 		"DEFAULT_OVERLAY_SCALE": "Default overlay size",
 		"DEFAULT_OVERLAY_SCALE_HELP": "Spawn new overlays at this scale.",
+		"DEFAULT_CURVATURE": "Default overlay curvature",
+		"DEFAULT_OPACITY": "Default overlay opacity",
+		"DEFAULT_POSITIONING": "Default overlay positioning",
+		"OVERLAY_DEFAULTS_HELP": "Only applies to new overlays",
 		"ENABLED": "Enabled",
 		"FEATURES": "Features",
 		"FOCUS_FOLLOWS_MOUSE_MODE": "Mouse move on trigger touch",
@@ -151,6 +163,9 @@
 		"NO_SKYMAPS_FOUND": "No skymaps found",
 		"OPAQUE_BACKGROUND": "Opaque background",
 		"OPTION": {
+			"ANCHORED_HELP": "Moves with center marker. Recommended.",
+			"FLOATING_HELP": "Moves independently, recenters.\nEasy to misplace; not recommended.",
+			"STATIC_HELP": "Stays in place relative to world.",
 			"AUTO": "Automatic",
 			"AUTO_HELP": "ScreenCopy GPU if supported,\notherwise PipeWire GPU.",
 			"EYE_ONLY": "Eye laser",
@@ -193,11 +208,11 @@
 		"ENABLE_WATCH": "Enable watch",
 		"SETS_ON_WATCH": "Sets on watch",
 		"SHOW_WELCOME_SCREEN": "Show welcome screen",
-		"SKYBOX": "Skybox",
+		"SKYBOX": "Skymap",
 		"SKYMAP_ALREADY_DOWNLOADED": "This skymap is already downloaded. Select desired action.",
-		"SPACE_DRAG": "Space drag",
+		"SPACE_DRAG": "Playspace",
 		"SPACE_DRAG_MULTIPLIER": "Space drag multiplier",
-		"SPACE_DRAG_AFFECTS_WORLD": "Space drag moves overlays",
+		"SPACE_DRAG_AFFECTS_WORLD": "Leave overlays behind during space move",
 		"SPACE_DRAG_UNLOCKED": "Allow space drag on all axes",
 		"SPACE_GRAVITY_DAMPING": "Damping",
 		"SPACE_GRAVITY_DAMPING_HELP": "Artificial drag to slow down movement. 0.1 - high drag, 1.0 - no drag",
@@ -216,8 +231,8 @@
 		"UPRIGHT_SCREEN_FIX_HELP": "Fixes upright screens on some desktops",
 		"USE_PASSTHROUGH": "Enable passthrough",
 		"USE_PASSTHROUGH_HELP": "Allow passthrough if the XR runtime supports it",
-		"USE_SKYBOX": "Enable skybox",
-		"USE_SKYBOX_HELP": "Show a skybox if there's no scene app or passthrough",
+		"USE_SKYBOX": "Show skymap",
+		"USE_SKYBOX_HELP": "Show a skymap if there's no scene app or passthrough",
 		"WATCH_VIEW_ANGLE": "Watch view angles",
 		"WATCH_VIEW_ANGLE_HELP": "Control how the watch fades away",
 		"WHISPER": {
@@ -238,7 +253,7 @@
 		"SWIPE_TYPE_MODELS": "Swipe-to-type models",
 		"SWIPE_TYPE_MODELS_HELP": "Model files used by swipe-to-type.\nAll of them are required.",
 		"GRID_OPACITY": "Floor grid opacity",
-		"GRID_OPACITY_HELP": "Opacity of the floor grid when the skybox is enabled",
+		"GRID_OPACITY_HELP": "Opacity of the floor grid when the skymap is enabled",
 		"XWAYLAND_BY_DEFAULT": "Run apps in Compatibility mode by default",
 		"SAVE": "Save",
 		"CANCEL": "Cancel"
@@ -269,7 +284,10 @@
 		"DESCRIPTION": "We're a small team of 2 developers building WayVR in our free time. If you enjoy using this software, please consider supporting us - every donation helps us keep going.",
 		"THANK_YOU_WAYVR": "Thank you from the WayVR Team!",
 		"BUTTON_TOOLTIP": "Donate via Open Collective",
-		"CURRENT_SUPPORTERS": "Current Supporters"
+		"CURRENT_SUPPORTERS": "Current Supporters",
+		"BROUGHT_TO_YOU_VARIANTS_OFTEN": "Supported by {USER}|Special thanks to {USER}|Sponsored by {USER}|Backed by {USER}|Driven by community members like {USER}|Made possible by {USER}|Sustained by {USER}|Contributed by {USER}|Funded by {USER}",
+		"BROUGHT_TO_YOU_VARIANTS_RARE": "Coffee provided by {USER}|Fuelled by {USER}|Shoutout to {USER}!|Keeping us going: {USER}|Helping us grow: {USER}|Keeping the servers running: {USER}|With gratitude to {USER}|Powered by {USER}|Supported by friends like {USER}",
+		"BROUGHT_TO_YOU_VARIANTS_VERY_RARE": "Supported by legends like {USER}|Caffeine supplied by {USER}|A true legend: {USER}|Our hero of the day: {USER}|An absolute superstar: {USER}|Paying for the electricity bill: {USER}|Leading the way: {USER}|Caffeine-to-code converter provided by {USER}|Keeping the production stable: {USER}|The one and only: {USER}|Passing dmabuf buffers: {USER}"
 	},
 	"DOWNLOAD": "Download",
 	"DOWNLOADER": "Downloader",
@@ -288,12 +306,12 @@
 		"LASER_FUNCTIONALITY": "Much of the functionality in WayVR depends on what color of laser is used to interact with a UI element. You don't need to press these buttons, just touch them!",
 		"LAST_PAGE_INFO": "This tutorial will stop showing up once you get to the last page.",
 		"LOOK_AT_LEFT_WRIST": "Look at your left wrist. That's your watch.",
-		"MIDDLE_CLICK_MODE_PURPLE_LASER": "— Middle-click Mode: Purple laser",
+		"MIDDLE_CLICK_MODE_PURPLE_LASER": "Middle-click Mode: Purple laser",
 		"MOVING_YOUR_SET": "Moving your set",
-		"NEXT_BUTTON": "Press \"Next\" button below to get started.",
-		"REGULAR_MODE_BLUE_LASER": "— Regular Mode: Blue laser",
+		"NEXT_BUTTON": "Press Next button below to get started.",
+		"REGULAR_MODE_BLUE_LASER": "Regular Mode: Blue laser",
 		"REPOSITION_THIS_WINDOW_BY_GRABBING": "Reposition this window using your controller's grip action.",
-		"RIGHT_CLICK_MODE_ORANGE_LASER": "— Right-click Mode: Orange laser",
+		"RIGHT_CLICK_MODE_ORANGE_LASER": "Right-click Mode: Orange laser",
 		"THANKS_FOR_INSTALLING": "Thank you for installing WayVR!",
 		"WATCH": "Watch",
 		"WORKING_SET": "Working Set"
@@ -335,10 +353,10 @@
 	"TERMINATE_PROCESS": "Terminate process",
 	"VERSION": "Version",
 	"WIDTH": "Width",
-	"SAVED_TO_FAVOURITES": "Saved to favourites",
-	"ADD_TO_FAVOURITES": "Add to favourites",
+	"PINNED_APPS": "Pinned applications",
+	"SAVED_TO_FAVOURITES": "Saved to pinned apps",
+	"ADD_TO_FAVOURITES": "Add to pinned apps",
 	"ADD_TO_FAVOURITES_HINT": "Save preset and pin it to the app drawer",
-	"REMOVE_FROM_FAVOURITES": "Remove from favourites",
-	"EMPTY": "Empty",
-	"PINNED_APPS": "Pinned applications"
+	"REMOVE_FROM_FAVOURITES": "Remove from pinned apps",
+	"EMPTY": "Empty"
 }
