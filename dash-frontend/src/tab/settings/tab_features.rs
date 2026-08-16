@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use wgui::{
-	components::button::{ButtonClickEvent, ComponentButton},
+	components::{
+		button::{ButtonClickEvent, ComponentButton},
+		checkbox::ComponentCheckbox,
+	},
 	globals::WguiGlobals,
 	i18n::Translation,
 	layout::WidgetID,
@@ -18,7 +21,10 @@ use crate::{
 	frontend::FrontendTasks,
 	tab::settings::{
 		SettingType, SettingsMountParams, SettingsTab, TabNameEnum, Task as ParentTask, horiz_cell,
-		macros::{MacroParams, options_category, options_checkbox, options_range_f32},
+		mount_requires_restart,
+		macros::{
+			MacroParams, options_category, options_checkbox, options_range_f32,
+		},
 	},
 	util::{
 		popup_manager::PopupHolder,
@@ -206,7 +212,7 @@ impl State {
 		if par.feats.swipe_to_type {
 			swipe_type_models_button(par.mp, c)?;
 		}
-		options_checkbox(par.mp, c, SettingType::KeyboardSwipeToTypeEnabled)?;
+		swipe_type_enabled_checkbox(par.mp, c)?;
 		options_checkbox(par.mp, c, SettingType::NotificationsEnabled)?;
 		options_checkbox(par.mp, c, SettingType::NotificationsSoundEnabled)?;
 		options_checkbox(par.mp, c, SettingType::KeyboardSoundEnabled)?;
@@ -490,6 +496,62 @@ fn swipe_type_models_button(mp: &mut MacroParams, parent: WidgetID) -> anyhow::R
 		let action = Rc::<str>::from(action);
 		move |_common, _e: ButtonClickEvent| {
 			parent_tasks.push(ParentTask::SwipeTypeAction(action.clone()));
+			Ok(())
+		}
+	}));
+
+	Ok(())
+}
+
+fn swipe_type_enabled_checkbox(mp: &mut MacroParams, parent: WidgetID) -> anyhow::Result<()> {
+	let id = mp.idx.to_string();
+	mp.idx += 1;
+
+	let setting = SettingType::KeyboardSwipeToTypeEnabled;
+
+	// cannot enable swipe-to-type until the model is downloaded
+	let model_downloaded = swwipe_type_model_downloaded().unwrap_or_default();
+
+	let mut params = TemplateParams::new();
+	params.insert("id", &id);
+
+	match setting.get_translation() {
+		Ok(translation) => params.insert("translation", translation),
+		Err(raw_text) => params.insert("text", raw_text),
+	};
+
+	let tooltip = if model_downloaded {
+		setting.get_tooltip()
+	} else {
+		Some("APP_SETTINGS.SWIPE_TYPE.MODEL_REQUIRED_TO_ENABLE")
+	};
+	if let Some(tooltip) = tooltip {
+		params.insert("tooltip", tooltip);
+	}
+
+	let checked = if *setting.mut_bool(mp.config) { "1" } else { "0" };
+	params.insert("checked", checked);
+
+	let id_cell = horiz_cell(mp.layout, parent)?;
+
+	mp.parser_state
+		.instantiate_template(mp.doc_params, "CheckBoxSetting", mp.layout, id_cell, params)?;
+
+	if setting.requires_restart() {
+		mount_requires_restart(mp.layout, id_cell)?;
+	}
+
+	let checkbox = mp.parser_state.fetch_component_as::<ComponentCheckbox>(&id)?;
+
+	if !model_downloaded {
+		let mut common = mp.layout.common();
+		checkbox.set_disabled(&mut common, true);
+	}
+
+	checkbox.on_toggle(Box::new({
+		let tasks = mp.tasks.clone();
+		move |_common, e| {
+			tasks.push(ParentTask::UpdateBool(setting, e.checked));
 			Ok(())
 		}
 	}));

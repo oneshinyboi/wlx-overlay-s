@@ -230,6 +230,7 @@
 			"NEED_TO_DOWNLOAD_MODELS": "The swipe-to-type model needs to be downloaded.\nDownload it now?",
 			"MODELS_DOWNLOADED": "Model downloaded",
 			"MODELS_NOT_DOWNLOADED": "Model not downloaded",
+			"MODEL_REQUIRED_TO_ENABLE": "Download the swipe-to-type model to enable this option.",
 			"REMOVE_MODELS": "Remove swipe to type model",
 			"DOWNLOAD_MODELS": "Download swipe to type model",
 			"DOWNLOAD_MODELS_HELP": "Swipe to type only works on qwerty layout keyboards"

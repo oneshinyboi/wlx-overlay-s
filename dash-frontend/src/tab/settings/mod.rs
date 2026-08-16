@@ -552,7 +552,7 @@ impl SettingType {
 			Self::InvertScrollDirectionY => Ok("APP_SETTINGS.INVERT_SCROLL_DIRECTION_Y"),
 			Self::KeyboardMiddleClick => Ok("APP_SETTINGS.KEYBOARD_MIDDLE_CLICK"),
 			Self::KeyboardSoundEnabled => Ok("APP_SETTINGS.KEYBOARD_SOUND_ENABLED"),
-			Self::KeyboardSwipeToTypeEnabled => Ok("APP_SETTINGS.KEYBOARD_SWIPE_TYPE_ENABLED"),
+			Self::KeyboardSwipeToTypeEnabled => Ok("APP_SETTINGS.KEYBOARD_SWIPE_TO_TYPE_ENABLED"),
 			Self::Language => Ok("APP_SETTINGS.LANGUAGE"),
 			Self::LeftHandedMouse => Ok("APP_SETTINGS.LEFT_HANDED_MOUSE"),
 			Self::LongPressDuration => Ok("APP_SETTINGS.LONG_PRESS_DURATION"),
