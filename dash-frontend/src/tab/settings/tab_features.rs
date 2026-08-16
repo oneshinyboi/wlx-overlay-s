@@ -17,21 +17,17 @@ use wgui::{
 };
 use wlx_common::{async_executor::AsyncExecutor, config::GeneralConfig, dash_interface::ConfigChangeKind};
 
+use crate::util::downloadable_file::DownloadableFile;
 use crate::{
 	frontend::FrontendTasks,
 	tab::settings::{
 		SettingType, SettingsMountParams, SettingsTab, TabNameEnum, Task as ParentTask, horiz_cell,
+		macros::{MacroParams, options_category, options_checkbox, options_range_f32},
 		mount_requires_restart,
-		macros::{
-			MacroParams, options_category, options_checkbox, options_range_f32,
-		},
 	},
 	util::{
 		popup_manager::PopupHolder,
-		swipe_type::{
-			SWIPE_TYPE_MODEL, swwipe_type_model_downloaded,
-			swipe_type_delete_all_models, swipe_type_model_path,
-		},
+		swipe_type::{SWIPE_TYPE_MODEL, swipe_type_delete_all_models, swipe_type_model_path, swwipe_type_model_downloaded},
 		whisper::{
 			WHISPER_MODELS, whisper_any_models_downloaded, whisper_delete_all_models, whisper_model_from_name,
 			whisper_model_path,
@@ -39,7 +35,6 @@ use crate::{
 	},
 	views::{self, ViewUpdateParams},
 };
-use crate::util::downloadable_file::DownloadableFile;
 
 #[derive(Clone)]
 enum Task {
@@ -89,7 +84,13 @@ impl SettingsTab for State {
 				}
 				Task::WhisperDownload(model) => {
 					self.pending_whisper_download = Some(model);
-					self.show_download_dialogue(model, par.executor.clone(), whisper_model_path(model.file_name), Task::WhisperDownloadClosed, Task::WhisperDownloadDone);
+					self.show_download_dialogue(
+						model,
+						par.executor.clone(),
+						whisper_model_path(model.file_name),
+						Task::WhisperDownloadClosed,
+						Task::WhisperDownloadDone,
+					);
 				}
 				Task::WhisperDownloadDone => {
 					if let Some(model) = self.pending_whisper_download.take() {
@@ -114,7 +115,13 @@ impl SettingsTab for State {
 				}
 				Task::SwipeTypeDownloadAll => {
 					self.pending_swipe_download = Some(&SWIPE_TYPE_MODEL);
-					self.show_download_dialogue(&SWIPE_TYPE_MODEL, par.executor.clone(), swipe_type_model_path(SWIPE_TYPE_MODEL.file_name), Task::SwipeTypeDownloadClosed, Task::SwipeTypeDownloadDone);
+					self.show_download_dialogue(
+						&SWIPE_TYPE_MODEL,
+						par.executor.clone(),
+						swipe_type_model_path(SWIPE_TYPE_MODEL.file_name),
+						Task::SwipeTypeDownloadClosed,
+						Task::SwipeTypeDownloadDone,
+					);
 				}
 				Task::SwipeTypeDownloadDone => {
 					if let Some(_) = self.pending_swipe_download.take() {
@@ -247,7 +254,14 @@ impl State {
 		})
 	}
 
-	fn show_download_dialogue(&mut self, file: &DownloadableFile, executor: AsyncExecutor, target_path: PathBuf, on_closed: Task, on_downloaded: Task) {
+	fn show_download_dialogue(
+		&mut self,
+		file: &DownloadableFile,
+		executor: AsyncExecutor,
+		target_path: PathBuf,
+		on_closed: Task,
+		on_downloaded: Task,
+	) {
 		views::download_file::mount_popup(
 			self.popup_download.clone(),
 			self.frontend_tasks.clone(),

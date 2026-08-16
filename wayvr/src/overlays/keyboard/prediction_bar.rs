@@ -1,17 +1,13 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{
-    gui::panel::GuiPanel,
-    state::AppState,
-};
-use anyhow::bail;
-use slotmap::Key;
 use super::{
     KeyButtonData, KeyState, KeyboardState,
-    builder::{
-        new_doc_params, on_enter_anim, on_leave_anim, on_press_anim, on_release_anim,
-    },
+    builder::{new_doc_params, on_enter_anim, on_leave_anim, on_press_anim, on_release_anim},
 };
+use crate::{gui::panel::GuiPanel, state::AppState};
+use anyhow::bail;
+use slotmap::Key;
+use wgui::event::StyleSetRequest;
 use wgui::{
     event::EventListenerKind,
     layout::LayoutTask,
@@ -19,7 +15,6 @@ use wgui::{
     taffy::Display,
     widget::{EventResult, rectangle::WidgetRectangle},
 };
-use wgui::event::StyleSetRequest;
 
 /// Root widget that hosts the swipe-to-type prediction candidates.
 pub(super) const ROOT: &str = "swipe_predictions_root";
@@ -36,10 +31,7 @@ pub(super) fn update(
     if let Some(slot) = panel.state.swipe_candidate_slot.as_mut()
         && let Some(candidates) = slot.take()
     {
-        let predictions_root = panel
-            .parser_state
-            .get_widget_id(ROOT)
-            .unwrap_or_default();
+        let predictions_root = panel.parser_state.get_widget_id(ROOT).unwrap_or_default();
 
         if predictions_root.is_null() {
             return Ok(elements_changed);
@@ -155,10 +147,7 @@ pub(super) fn update(
 
 /// Show or hide the prediction candidate bar.
 pub(super) fn set_visible(panel: &mut GuiPanel<KeyboardState>, visible: bool) {
-    let predictions_root = panel
-        .parser_state
-        .get_widget_id(ROOT)
-        .unwrap_or_default();
+    let predictions_root = panel.parser_state.get_widget_id(ROOT).unwrap_or_default();
     if predictions_root.is_null() {
         return;
     }
@@ -169,6 +158,10 @@ pub(super) fn set_visible(panel: &mut GuiPanel<KeyboardState>, visible: bool) {
 
     panel.layout.tasks.push(LayoutTask::SetWidgetStyle(
         predictions_root,
-        StyleSetRequest::Display(if visible { Display::Flex } else { Display::None }),
+        StyleSetRequest::Display(if visible {
+            Display::Flex
+        } else {
+            Display::None
+        }),
     ));
 }

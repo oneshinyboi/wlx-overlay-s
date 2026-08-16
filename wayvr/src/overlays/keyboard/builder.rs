@@ -1,5 +1,11 @@
 use std::{rc::Rc, time::Duration};
 
+#[cfg(feature = "swipe-to-type")]
+use super::init_swipe_type_manager;
+use super::{
+    KeyButtonData, KeyState, KeyboardState, handle_mouse_motion, handle_press, handle_release,
+    layout::{self, KeyCapType},
+};
 use crate::{
     app_misc,
     gui::{
@@ -32,9 +38,6 @@ use wgui::{
 };
 #[cfg(feature = "swipe-to-type")]
 use wlx_common::data_dir;
-use super::{KeyButtonData, KeyState, KeyboardState, handle_press, handle_release, layout::{self, KeyCapType}, handle_mouse_motion};
-#[cfg(feature = "swipe-to-type")]
-use super::init_swipe_type_manager;
 
 const PIXELS_PER_UNIT: f32 = 60.;
 
@@ -236,9 +239,20 @@ pub(super) fn create_keyboard_panel(
                             let CallbackMetadata::MouseButton(button) = data.metadata else {
                                 panic!("CallbackMetadata should contain MouseButton!");
                             };
-                            let within_key_pos = data.metadata.get_mouse_pos_normalized(&common.alterables.transform_stack);
+                            let within_key_pos = data
+                                .metadata
+                                .get_mouse_pos_normalized(&common.alterables.transform_stack);
 
-                            handle_press(app, &k, &k_label, &k_cap_type, &within_key_pos, state, button, button.device);
+                            handle_press(
+                                app,
+                                &k,
+                                &k_label,
+                                &k_cap_type,
+                                &within_key_pos,
+                                state,
+                                button,
+                                button.device,
+                            );
                             on_press_anim(k.clone(), common, data);
                             Ok(EventResult::Pass)
                         }
@@ -252,12 +266,21 @@ pub(super) fn create_keyboard_panel(
                         let k_label = key_label.clone();
                         let k_cap_type = key_cap_type.clone();
                         move |common, data, _app, state| {
-                            let within_key_pos = data.metadata.get_mouse_pos_normalized(&common.alterables.transform_stack);
+                            let within_key_pos = data
+                                .metadata
+                                .get_mouse_pos_normalized(&common.alterables.transform_stack);
                             let CallbackMetadata::MousePosition(position) = data.metadata else {
                                 panic!("CallbackMetadata should contain MousePosition!");
                             };
 
-                            handle_mouse_motion(&k, &k_label, &k_cap_type, state, &within_key_pos, position.device);
+                            handle_mouse_motion(
+                                &k,
+                                &k_label,
+                                &k_cap_type,
+                                state,
+                                &within_key_pos,
+                                position.device,
+                            );
                             Ok(EventResult::Pass)
                         }
                     }),
@@ -348,9 +371,14 @@ pub(super) fn create_keyboard_panel(
 
                         super::prediction_bar::set_visible(panel, false);
                     }
-                    if app.session.config.keyboard_swipe_to_type_enabled && panel.state.swipe_typing_manager.is_none() {
+                    if app.session.config.keyboard_swipe_to_type_enabled
+                        && panel.state.swipe_typing_manager.is_none()
+                    {
                         #[cfg(feature = "swipe-to-type")]
-                        init_swipe_type_manager(&mut panel.state, data_dir::get_path("swipe_type").join("en.tar"));
+                        init_swipe_type_manager(
+                            &mut panel.state,
+                            data_dir::get_path("swipe_type").join("en.tar"),
+                        );
 
                         super::prediction_bar::set_visible(panel, true);
                     }

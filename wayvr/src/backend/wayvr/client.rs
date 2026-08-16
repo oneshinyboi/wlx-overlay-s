@@ -9,6 +9,7 @@ use std::{
 use anyhow::Context;
 use glam::{DVec2, Vec2};
 use slotmap::DenseSlotMap;
+use smithay::wayland::selection::data_device::set_data_device_selection;
 use smithay::{
     backend::input::{Axis, AxisSource, ButtonState, Keycode},
     input::{
@@ -18,17 +19,16 @@ use smithay::{
     reexports::wayland_server::{self, protocol::wl_surface::WlSurface},
     utils::{Logical, Point, SerialCounter},
 };
-use smithay::wayland::selection::data_device::set_data_device_selection;
 use wgui::log::LogErr;
 use xkbcommon::xkb;
 
-use crate::backend::wayvr::{ExternalProcessRequest, WayVRTask};
-use crate::backend::wayvr::comp::Application;
 use super::{
     ProcessWayVREnv,
     comp::{self, ClientState},
     process,
 };
+use crate::backend::wayvr::comp::Application;
+use crate::backend::wayvr::{ExternalProcessRequest, WayVRTask};
 
 pub struct WayVRClient {
     pub client: wayland_server::Client,
@@ -264,7 +264,10 @@ impl WayVRCompositor {
         set_data_device_selection::<Application>(
             &self.state.display_handle,
             &self.state.seat,
-            vec!["text/plain;charset=utf-8".to_string(), "text/plain".to_string()],
+            vec![
+                "text/plain;charset=utf-8".to_string(),
+                "text/plain".to_string(),
+            ],
             text.as_bytes().into(),
         );
     }

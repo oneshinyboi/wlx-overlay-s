@@ -270,13 +270,7 @@ impl<T> Tab<T> for TabSettings<T> {
 					if let Some(tab) = self.current_tab.as_mut() {
 						let config = frontend.interface.general_config(data);
 						let mut change_kind: Option<ConfigChangeKind> = None;
-						tab.push_task_string(
-							&action,
-							config,
-							&mut change_kind,
-							&mut frontend.layout,
-							&mut self.state,
-						)?;
+						tab.push_task_string(&action, config, &mut change_kind, &mut frontend.layout, &mut self.state)?;
 						if let Some(change_kind) = change_kind {
 							frontend.interface.config_changed(data, change_kind);
 						}

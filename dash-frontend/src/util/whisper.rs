@@ -1,7 +1,7 @@
 use std::{fs, io, path::PathBuf};
 
-use wlx_common::data_dir;
 use crate::util::downloadable_file::DownloadableFile;
+use wlx_common::data_dir;
 
 pub const WHISPER_MODELS: &[DownloadableFile] = &[
 	DownloadableFile {

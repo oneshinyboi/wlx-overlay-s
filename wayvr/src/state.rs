@@ -192,7 +192,8 @@ impl AppState {
         {
             feats.whisper = true;
         }
-        #[cfg(feature = "swipe-to-type")] {
+        #[cfg(feature = "swipe-to-type")]
+        {
             feats.swipe_to_type = true;
         }
 

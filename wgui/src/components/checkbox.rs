@@ -214,12 +214,19 @@ impl ComponentCheckbox {
 
 		set_box_checked(&common.state.widgets, &self.data, checked, hovered, disabled);
 
-		common.state.widgets.call(self.data.id_outer_box, |rect: &mut WidgetRectangle| {
-			rect.params.border_color = box_border_color(hovered, down, disabled);
-		});
+		common
+			.state
+			.widgets
+			.call(self.data.id_outer_box, |rect: &mut WidgetRectangle| {
+				rect.params.border_color = box_border_color(hovered, down, disabled);
+			});
 
 		if let Some(mut label) = common.state.widgets.get_as::<WidgetLabel>(self.data.id_label) {
-			let color = if disabled { disabled_color() } else { WguiColorName::OnBackground.into() };
+			let color = if disabled {
+				disabled_color()
+			} else {
+				WguiColorName::OnBackground.into()
+			};
 			label.set_color(common, color, true);
 		}
 
@@ -296,9 +303,7 @@ fn register_event_mouse_enter(
 
 			if !disabled {
 				common.alterables.trigger_haptics();
-				common
-					.alterables
-					.animate(anim_hover_in(&state, &data, anim_mult));
+				common.alterables.animate(anim_hover_in(&state, &data, anim_mult));
 
 				if checked {
 					common
@@ -338,9 +343,7 @@ fn register_event_mouse_leave(
 
 			if !disabled {
 				common.alterables.trigger_haptics();
-				common
-					.alterables
-					.animate(anim_hover_out(&state, &data, anim_mult));
+				common.alterables.animate(anim_hover_out(&state, &data, anim_mult));
 
 				if checked {
 					common
@@ -442,7 +445,13 @@ fn register_event_mouse_release(
 					});
 				}
 
-				set_box_checked(&common.state.widgets, &data, state.checked, state.hovered, state.disabled);
+				set_box_checked(
+					&common.state.widgets,
+					&data,
+					state.checked,
+					state.hovered,
+					state.disabled,
+				);
 				if state.hovered
 					&& let Some(on_toggle) = &state.on_toggle
 				{
