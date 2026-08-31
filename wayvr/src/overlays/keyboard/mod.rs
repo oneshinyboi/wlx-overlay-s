@@ -768,6 +768,8 @@ fn handle_release(
                             keyboard.modifiers &= !*m;
                         }
                     }
+                    app.hid_provider
+                        .set_modifiers_routed(app.wvr_server.as_mut(), keyboard.modifiers);
                     play_key_click(app);
                 }
                 KeyReleaseOutcome::Normal => {
