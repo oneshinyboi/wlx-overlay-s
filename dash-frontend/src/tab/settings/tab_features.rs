@@ -336,13 +336,13 @@ impl State {
 				message: Translation::from_translation_key("APP_SETTINGS.SWIPE_TYPE.NEED_TO_DOWNLOAD_MODEL"),
 				entries: vec![
 					views::dialog_box::ButtonEntry {
-					content: Translation::from_translation_key("APP_SETTINGS.CANCEL"),
-					icon: "@/dashboard/close.svg",
-					action: ACTION_CANCEL,
-				},
-				views::dialog_box::ButtonEntry {
-					content: Translation::from_translation_key("DOWNLOAD"),
-					icon: "@/dashboard/download.svg",
+						content: Translation::from_translation_key("APP_SETTINGS.CANCEL"),
+						icon: "@/dashboard/close.svg",
+						action: ACTION_CANCEL,
+					},
+					views::dialog_box::ButtonEntry {
+						content: Translation::from_translation_key("DOWNLOAD"),
+						icon: "@/dashboard/download.svg",
 						action: ACTION_DOWNLOAD,
 					},
 				],

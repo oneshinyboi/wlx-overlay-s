@@ -298,8 +298,8 @@ fn register_event_mouse_enter(
 
 			let checked;
 			let disabled;
-			
-			 {
+
+			{
 				let mut state = state.borrow_mut();
 				checked = state.checked;
 				disabled = state.disabled;
@@ -340,8 +340,8 @@ fn register_event_mouse_leave(
 
 			let checked;
 			let disabled;
-			
-			 {
+
+			{
 				let mut state = state.borrow_mut();
 				checked = state.checked;
 				disabled = state.disabled;

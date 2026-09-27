@@ -25,7 +25,7 @@ pub(super) fn update(
     app: &mut AppState,
 ) -> anyhow::Result<bool> {
     let mut elements_changed = false;
-    
+
     if let Some(slot) = panel.state.swipe_candidate_slot.as_mut()
         && let Some(candidates) = slot.take()
     {
