@@ -336,13 +336,13 @@ impl State {
 				message: Translation::from_translation_key("APP_SETTINGS.SWIPE_TYPE.NEED_TO_DOWNLOAD_MODEL"),
 				entries: vec![
 					views::dialog_box::ButtonEntry {
-						content: Translation::from_translation_key("APP_SETTINGS.CANCEL"),
-						icon: "dashboard/close.svg",
-						action: ACTION_CANCEL,
-					},
-					views::dialog_box::ButtonEntry {
-						content: Translation::from_translation_key("DOWNLOAD"),
-						icon: "dashboard/download.svg",
+					content: Translation::from_translation_key("APP_SETTINGS.CANCEL"),
+					icon: "@/dashboard/close.svg",
+					action: ACTION_CANCEL,
+				},
+				views::dialog_box::ButtonEntry {
+					content: Translation::from_translation_key("DOWNLOAD"),
+					icon: "@/dashboard/download.svg",
 						action: ACTION_DOWNLOAD,
 					},
 				],
@@ -489,13 +489,13 @@ fn swipe_type_models_button(mp: &mut MacroParams, parent: WidgetID) -> anyhow::R
 	let (translation, icon, action) = if all_downloaded {
 		(
 			"APP_SETTINGS.SWIPE_TYPE.REMOVE_MODEL",
-			"dashboard/trash.svg",
+			"@/dashboard/trash.svg",
 			"swipe_type_remove",
 		)
 	} else {
 		(
 			"APP_SETTINGS.SWIPE_TYPE.DOWNLOAD_MODEL",
-			"dashboard/download.svg",
+			"@/dashboard/download.svg",
 			"swipe_type_download",
 		)
 	};
