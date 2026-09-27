@@ -25,9 +25,7 @@ pub(super) fn update(
     app: &mut AppState,
 ) -> anyhow::Result<bool> {
     let mut elements_changed = false;
-
-    let anim_mult = app.wgui_theme.animation_mult;
-
+    
     if let Some(slot) = panel.state.swipe_candidate_slot.as_mut()
         && let Some(candidates) = slot.take()
     {
@@ -111,7 +109,7 @@ pub(super) fn update(
                     Box::new({
                         let k = key_state.clone();
                         move |common, data, _app, _state| {
-                            on_enter_anim(k.clone(), common, data, anim_mult, 0.0);
+                            on_enter_anim(k.clone(), common, data, 0.0);
                             Ok(EventResult::Pass)
                         }
                     }),
@@ -122,7 +120,7 @@ pub(super) fn update(
                     Box::new({
                         let k = key_state.clone();
                         move |common, data, _app, _state| {
-                            on_leave_anim(k.clone(), common, data, anim_mult, 0.0);
+                            on_leave_anim(k.clone(), common, data, 0.0);
                             Ok(EventResult::Pass)
                         }
                     }),

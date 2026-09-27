@@ -245,8 +245,6 @@ fn anim_hover(anim_data: &mut crate::animation::CallbackData<'_>, pos: f32, pres
 }
 
 fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>) -> Animation {
-	let down = state.borrow().down;
-fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -> Animation {
 	let down;
 	let disabled;
 	{
@@ -298,7 +296,10 @@ fn register_event_mouse_enter(
 
 			ComponentTooltip::register_hover_in(common, &tooltip_info, data.id_container, state.clone());
 
-			let checked = {
+			let checked;
+			let disabled;
+			
+			 {
 				let mut state = state.borrow_mut();
 				checked = state.checked;
 				disabled = state.disabled;
@@ -307,7 +308,7 @@ fn register_event_mouse_enter(
 
 			if !disabled {
 				common.alterables.trigger_haptics();
-				common.alterables.animate(anim_hover_in(&state, &data, anim_mult));
+				common.alterables.animate(anim_hover_in(&state, &data));
 
 				if checked {
 					common
@@ -337,7 +338,10 @@ fn register_event_mouse_leave(
 			common.alterables.trigger_haptics();
 			anim_hover_out(&state, &data).submit(common.alterables);
 
-			let checked = {
+			let checked;
+			let disabled;
+			
+			 {
 				let mut state = state.borrow_mut();
 				checked = state.checked;
 				disabled = state.disabled;
@@ -347,7 +351,7 @@ fn register_event_mouse_leave(
 
 			if !disabled {
 				common.alterables.trigger_haptics();
-				common.alterables.animate(anim_hover_out(&state, &data, anim_mult));
+				common.alterables.animate(anim_hover_out(&state, &data));
 
 				if checked {
 					common
