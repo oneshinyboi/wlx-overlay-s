@@ -8,7 +8,7 @@ use taffy::{
 };
 
 use crate::{
-	animation::{Animation, AnimationEasing},
+	animation::{Animation, AnimationDuration, AnimationEasing},
 	color::{WguiColor, WguiColorName},
 	components::{
 		Component, ComponentBase, ComponentTrait, DestroyData, RefreshData,
@@ -244,6 +244,8 @@ fn anim_hover(anim_data: &mut crate::animation::CallbackData<'_>, pos: f32, pres
 	rect.params.border_color = box_border_color(pos > 0.0, pressed, disabled);
 }
 
+fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>) -> Animation {
+	let down = state.borrow().down;
 fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -> Animation {
 	let down;
 	let disabled;
@@ -254,7 +256,7 @@ fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) ->
 	}
 	Animation::new(
 		data.id_outer_box,
-		(5. * anim_mult) as _,
+		AnimationDuration::Seconds(0.0833),
 		AnimationEasing::OutQuad,
 		Box::new(move |common, anim_data| {
 			anim_hover(anim_data, anim_data.pos, down, disabled);
@@ -263,7 +265,7 @@ fn anim_hover_in(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) ->
 	)
 }
 
-fn anim_hover_out(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -> Animation {
+fn anim_hover_out(state: &Rc<RefCell<State>>, data: &Rc<Data>) -> Animation {
 	let down;
 	let disabled;
 	{
@@ -273,7 +275,7 @@ fn anim_hover_out(state: &Rc<RefCell<State>>, data: &Rc<Data>, anim_mult: f32) -
 	}
 	Animation::new(
 		data.id_outer_box,
-		(8. * anim_mult) as _,
+		AnimationDuration::Seconds(0.0833),
 		AnimationEasing::OutQuad,
 		Box::new(move |common, anim_data| {
 			anim_hover(anim_data, 1.0 - anim_data.pos, down, disabled);
@@ -287,14 +289,16 @@ fn register_event_mouse_enter(
 	data: Rc<Data>,
 	listeners: &mut EventListenerCollection,
 	tooltip_info: Option<tooltip::TooltipInfo>,
-	anim_mult: f32,
 ) -> EventListenerID {
 	listeners.register(
 		EventListenerKind::MouseEnter,
 		Box::new(move |common, _event_data, (), ()| {
-			let checked;
-			let disabled;
-			{
+			common.alterables.trigger_haptics();
+			anim_hover_in(&state, &data).submit(common.alterables);
+
+			ComponentTooltip::register_hover_in(common, &tooltip_info, data.id_container, state.clone());
+
+			let checked = {
 				let mut state = state.borrow_mut();
 				checked = state.checked;
 				disabled = state.disabled;
@@ -326,14 +330,14 @@ fn register_event_mouse_leave(
 	state: Rc<RefCell<State>>,
 	data: Rc<Data>,
 	listeners: &mut EventListenerCollection,
-	anim_mult: f32,
 ) -> EventListenerID {
 	listeners.register(
 		EventListenerKind::MouseLeave,
 		Box::new(move |common, _event_data, (), ()| {
-			let checked;
-			let disabled;
-			{
+			common.alterables.trigger_haptics();
+			anim_hover_out(&state, &data).submit(common.alterables);
+
+			let checked = {
 				let mut state = state.borrow_mut();
 				checked = state.checked;
 				disabled = state.disabled;
@@ -592,10 +596,9 @@ pub fn construct(ess: &mut ConstructEssentials, params: Params) -> anyhow::Resul
 		id: root.id,
 		lhandles: {
 			let listeners = &mut root.widget.state().event_listeners;
-			let anim_mult = ess.layout.state.theme.animation_mult;
 			vec![
-				register_event_mouse_enter(state.clone(), data.clone(), listeners, params.tooltip, anim_mult),
-				register_event_mouse_leave(state.clone(), data.clone(), listeners, anim_mult),
+				register_event_mouse_enter(state.clone(), data.clone(), listeners, params.tooltip),
+				register_event_mouse_leave(state.clone(), data.clone(), listeners),
 				register_event_mouse_cancel(state.clone(), listeners),
 				register_event_mouse_press(state.clone(), data.clone(), listeners),
 				register_event_mouse_release(data.clone(), state.clone(), listeners),

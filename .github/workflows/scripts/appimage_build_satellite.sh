@@ -1,6 +1,7 @@
 #!/bin/sh
+set -eu
 
-sudo apt install \
+sudo apt-get install -y \
     xwayland \
     libxcb1-dev \
     libxcb-cursor-dev \
@@ -11,7 +12,7 @@ git clone https://github.com/Supreeeme/xwayland-satellite.git
 cd xwayland-satellite
 
 cargo build --release
-chmod +x ../target/release/xwayland-satellite
+chmod +x target/release/xwayland-satellite
 cd ..
 
-cp xwayland-satellite/target/release/xwayland-satellite ${APPDIR}/usr/bin
+cp xwayland-satellite/target/release/xwayland-satellite "${APPDIR}/usr/bin"

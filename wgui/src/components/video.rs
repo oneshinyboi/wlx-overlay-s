@@ -2,8 +2,8 @@ use image::ImageBuffer;
 use taffy::prelude::percent;
 
 use crate::{
-	animation::Animation,
-	assets::AssetPath,
+	animation::{Animation, AnimationDuration},
+	assets::AssetPathRef,
 	color::WguiColorName,
 	components::{Component, ComponentBase, ComponentTrait, RefreshData},
 	event::EventAlterables,
@@ -27,7 +27,7 @@ use std::{
 #[derive(Default)]
 pub struct Params<'a> {
 	pub style: taffy::Style,
-	pub src: Option<AssetPath<'a>>,
+	pub src: Option<AssetPathRef<'a>>,
 	pub looping: bool,
 	pub speed: f32,
 }
@@ -112,10 +112,10 @@ impl ComponentVideo {
 		let start_time = get_millis();
 		// log::info!("num frames: {}", source.demuxer.num_frames);
 
-		layout.animations.add(Animation::new_ex(
+		Animation::new_ex(
 			self.data.id_image,
 			PLAYBACK_ANIMATION_ID,
-			u32::MAX, // infinity
+			AnimationDuration::Infinity,
 			crate::animation::AnimationEasing::Linear,
 			Box::new({
 				let state_ref = self.state.clone();
@@ -163,7 +163,8 @@ impl ComponentVideo {
 					}
 				}
 			}),
-		));
+		)
+		.submit_l(layout);
 		Ok(())
 	}
 
@@ -206,8 +207,8 @@ impl ComponentVideo {
 }
 
 impl State {
-	fn set_source(&mut self, globals: &WguiGlobals, src: AssetPath) -> anyhow::Result<()> {
-		let video_data = globals.get_asset(src)?;
+	fn set_source(&mut self, globals: &WguiGlobals, src: AssetPathRef) -> anyhow::Result<()> {
+		let video_data = globals.get_asset(src)?.0;
 		let demuxer = IvfReader::new(video_data)?;
 		let decoder = Av1Decoder::new()?;
 

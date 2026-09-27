@@ -1,4 +1,4 @@
-<layout>
+<layout version="2">
   <macro name="group_box"
     flex_direction="column"
     align_items="baseline"
@@ -7,7 +7,14 @@
     border_color="outline"
     padding="12"
     gap="8"
-    round="8" />
+    round="8"/>
+  
+  <!-- id -->
+  <template name="GroupBox">
+    <rectangle macro="group_box" id="rect">
+      <CHILDREN/>
+    </rectangle>
+  </template>
 
   <!-- src_builtin, text, translation -->
   <template name="GroupBoxTitle">

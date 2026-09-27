@@ -119,6 +119,11 @@ controllers are unavailable.
 Left pinch is grab, right is click.",Tooltip for the handsfree mode dropdown.
 APP_SETTINGS.HANDSFREE_ALT_TAB,App switcher aim,Dropdown/setting in Settings > Features tab. Controls how the alt-tab app switcher is aimed.
 APP_SETTINGS.HANDSFREE_ALT_TAB_HELP,"Hold Super+X, aim at the desired window, then release to switch focus.",Tooltip explaining the handsfree alt-tab behavior.
+APP_SETTINGS.DIAGNOSTICS,"Diagnostics","Tab name for the hardware/software check panel"
+APP_SETTINGS.DIAGNOSTICS_REASON.PACTL,"Required for speaker/microphone control and audio card switching","Reason for why the given software is recommended"
+APP_SETTINGS.DIAGNOSTICS_REASON.CAGE,"Recommended in case if there's an incompatibility with some X11 applications (Compatibility mode)","Reason for why the given software is required or recommended"
+APP_SETTINGS.DIAGNOSTICS_REASON.XWAYLAND_SATELLITE,"Recommended in case if you want to run X11 (Xwayland) applications in native mode","Reason for why the given software is required or recommended"
+APP_SETTINGS.DIAGNOSTICS_REASON.XDG_OPEN,"Required for opening URLs or Steam games","Reason for why the given software is required or recommended"
 APP_SETTINGS.HIDE_GRAB_HELP,Hide grab help,Checkbox label in Settings > Look & Feel tab. Hides the grab help overlay/text.
 APP_SETTINGS.HIDE_USERNAME,Hide username,Checkbox label in Settings > Look & Feel tab. Hides the user's username from the UI.
 APP_SETTINGS.INPUT_EMULATION_METHOD,Input emulation method,"Dropdown label in Settings > Miscellaneous tab. Selects how WayVR emulates mouse/keyboard input (uinput, Wayland virtual, none)."
@@ -143,6 +148,9 @@ APP_SETTINGS.LEFT_HANDED_MOUSE_HELP,Use this if mouse buttons are swapped,Toolti
 APP_SETTINGS.LONG_PRESS_DURATION,Long press duration,Setting in Settings > Features tab. Controls how long a press must be held to register as a long press.
 APP_SETTINGS.LOOK_AND_FEEL,Look & Feel,"Category header in Settings. Groups visual/customization settings like language, opacity, animation speed, color palettes."
 APP_SETTINGS.MISC,Miscellaneous,"Category header in Settings. Groups troubleshooting and system-level settings like capture method, input emulation, xwayland."
+APP_SETTINGS.MIDDLE_GRABS_SINGLE,"Middle-click modifier grabs individual","Checkbox label in Settings > Controls tab. When enabled, grabbing with the middle modifier will always grab individual objects, never the entire set of objects. ""Middle-click modifier"" was previously translated as ""${APP_SETTINGS.BINDINGS.ACTION.CLICK_MODIFIER_MIDDLE}"""
+APP_SETTINGS.MIDDLE_GRABS_SINGLE_HELP,"Grabbing with the middle-click modifier (purple laser)
+will grab individual overlays, not the entire set","Tooltip for the middle modifier grabs single overlays checkbox. ""Middle-click modifier"" was previously translated as ""${APP_SETTINGS.BINDINGS.ACTION.CLICK_MODIFIER_MIDDLE}"""
 APP_SETTINGS.NOTIFICATIONS_ENABLED,Enable notifications,Checkbox label in Settings > Features tab. Enables or disables system notifications within WayVR.
 APP_SETTINGS.NOTIFICATIONS_SOUND_ENABLED,Notification sounds,Checkbox label in Settings > Features tab. Enables or disables sound effects for notifications.
 APP_SETTINGS.NOT_SUPPORTED,Not supported,Label shown in the space drag/physics settings when a feature (like gravity) is not supported by the current backend.
@@ -341,3 +349,5 @@ ADD_TO_FAVOURITES,Add to pinned apps,"Label on the pin button in the app launche
 ADD_TO_FAVOURITES_HINT,Save preset and pin it to the app drawer,"Tooltip on the add to favourites button in the app launcher popup. ""Pinned apps"" was previously translated as ""${PINNED_APPS}""."
 REMOVE_FROM_FAVOURITES,Remove from pinned apps,"Label on the unpin section in the app launcher popup. ""Pinned apps"" was previously translated as ""${PINNED_APPS}""."
 EMPTY,Empty,Label shown in the pinned apps section when there are no pinned apps.
+INSTALLED,"Installed","Installation flag (installed/not installed)"
+NOT_INSTALLED,"Not installed","Installation flag (installed/not installed)"

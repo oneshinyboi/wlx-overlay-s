@@ -39,27 +39,29 @@ fn handle_result<T: Serialize>(pretty_print: bool, result: anyhow::Result<T>) {
     }
 }
 
-pub async fn wvr_window_list(state: &mut WayVRClientState) {
-    handle_result(
-        state.pretty_print,
-        WayVRClient::fn_wvr_window_list(
-            state.wayvr_client.clone(),
-            state.serial_generator.increment_get(),
-        )
-        .await
-        .context("failed to list window displays"),
-    );
+pub async fn wlx_overlay_list(state: &mut WayVRClientState, visible: bool, hidden: bool) {
+    let result = WayVRClient::fn_wlx_overlay_list(
+        state.wayvr_client.clone(),
+        state.serial_generator.increment_get(),
+        packet_client::WlxOverlayListParams { visible, hidden },
+    )
+    .await;
+
+    match result {
+        Ok(names) => {
+            for name in names {
+                println!("{name}");
+            }
+        }
+        Err(e) => log::error!("failed to list overlays: {e:?}"),
+    }
 }
 
-pub async fn wvr_window_set_visible(
-    state: &mut WayVRClientState,
-    handle: packet_server::WvrWindowHandle,
-    visible: bool,
-) {
+pub async fn wlx_overlay_set_visible(state: &mut WayVRClientState, overlay: String, visible: bool) {
     handle_empty_result(
-        WayVRClient::fn_wvr_window_set_visible(state.wayvr_client.clone(), handle, visible)
+        WayVRClient::fn_wlx_overlay_set_visible(state.wayvr_client.clone(), overlay, visible)
             .await
-            .context("failed to set window visibility"),
+            .context("failed to set overlay visibility"),
     )
 }
 
@@ -219,4 +221,153 @@ pub async fn wlx_input_state(state: &mut WayVRClientState) {
         .await
         .context("failed to get input state"),
     )
+}
+
+pub async fn wlx_window_state_get(
+    state: &mut WayVRClientState,
+    overlay: String,
+    field: packet_client::WlxWindowStateField,
+) {
+    let result = WayVRClient::fn_wlx_window_state_get(
+        state.wayvr_client.clone(),
+        state.serial_generator.increment_get(),
+        packet_client::WlxWindowStateGetParams { overlay, field },
+    )
+    .await;
+
+    match result {
+        Ok(Ok(value)) => handle_result(state.pretty_print, Ok(window_state_value_to_json(value))),
+        Ok(Err(reason)) => log::error!("failed to get window state: {reason}"),
+        Err(e) => log::error!("failed to get window state: {e:?}"),
+    }
+}
+
+fn window_state_value_to_json(value: packet_client::WlxWindowStateValue) -> serde_json::Value {
+    match value {
+        packet_client::WlxWindowStateValue::Bool(value) => serde_json::Value::Bool(value),
+        packet_client::WlxWindowStateValue::Float(value) => serde_json::to_value(value).unwrap(),
+        packet_client::WlxWindowStateValue::Positioning(value) => {
+            serde_json::json!(window_state_positioning_name(&value))
+        }
+    }
+}
+
+fn window_state_positioning_name(value: &packet_client::WlxPositioning) -> &'static str {
+    match value {
+        packet_client::WlxPositioning::Floating => "floating",
+        packet_client::WlxPositioning::Anchored => "anchored",
+        packet_client::WlxPositioning::Static => "static",
+        packet_client::WlxPositioning::FollowHead { .. } => "follow_head",
+        packet_client::WlxPositioning::FollowHand { hand, .. } => match hand {
+            packet_client::WlxHand::Left => "follow_hand_left",
+            packet_client::WlxHand::Right => "follow_hand_right",
+        },
+    }
+}
+
+pub async fn wlx_window_state_set(
+    state: &mut WayVRClientState,
+    overlay: String,
+    field: packet_client::WlxWindowStateField,
+    value: packet_client::WlxWindowStateValue,
+) {
+    handle_empty_result(
+        WayVRClient::fn_wlx_window_state_set(
+            state.wayvr_client.clone(),
+            packet_client::WlxWindowStateSetParams {
+                overlay,
+                field,
+                value,
+            },
+        )
+        .await
+        .context("failed to set window state"),
+    )
+}
+
+pub async fn wlx_window_attrib_get(
+    state: &mut WayVRClientState,
+    overlay: String,
+    attrib: packet_client::WlxWindowAttrib,
+) {
+    let result = WayVRClient::fn_wlx_window_attrib_get(
+        state.wayvr_client.clone(),
+        state.serial_generator.increment_get(),
+        packet_client::WlxWindowAttribGetParams { overlay, attrib },
+    )
+    .await;
+
+    match result {
+        Ok(Ok(value)) => handle_result(state.pretty_print, Ok(window_attrib_value_to_json(value))),
+        Ok(Err(reason)) => log::error!("failed to get window attrib: {reason}"),
+        Err(e) => log::error!("failed to get window attrib: {e:?}"),
+    }
+}
+
+fn window_attrib_value_to_json(value: packet_client::WlxWindowAttribValue) -> serde_json::Value {
+    match value {
+        packet_client::WlxWindowAttribValue::Stereo(mode) => {
+            serde_json::json!(window_attrib_stereo_name(&mode))
+        }
+        packet_client::WlxWindowAttribValue::StereoFullFrame(value)
+        | packet_client::WlxWindowAttribValue::StereoAdjustMouse(value) => {
+            serde_json::Value::Bool(value)
+        }
+        packet_client::WlxWindowAttribValue::MouseTransform(transform) => {
+            serde_json::json!(window_attrib_mouse_transform_name(&transform))
+        }
+        packet_client::WlxWindowAttribValue::WindowSize([width, height]) => {
+            serde_json::json!([width, height])
+        }
+    }
+}
+
+fn window_attrib_stereo_name(mode: &packet_client::WlxStereoMode) -> &'static str {
+    match mode {
+        packet_client::WlxStereoMode::None => "none",
+        packet_client::WlxStereoMode::LeftRight => "left_right",
+        packet_client::WlxStereoMode::RightLeft => "right_left",
+        packet_client::WlxStereoMode::TopBottom => "top_bottom",
+        packet_client::WlxStereoMode::BottomTop => "bottom_top",
+    }
+}
+
+fn window_attrib_mouse_transform_name(
+    transform: &packet_client::WlxMouseTransform,
+) -> &'static str {
+    match transform {
+        packet_client::WlxMouseTransform::Default => "default",
+        packet_client::WlxMouseTransform::Normal => "normal",
+        packet_client::WlxMouseTransform::Rotated90 => "rotated90",
+        packet_client::WlxMouseTransform::Rotated180 => "rotated180",
+        packet_client::WlxMouseTransform::Rotated270 => "rotated270",
+        packet_client::WlxMouseTransform::Flipped => "flipped",
+        packet_client::WlxMouseTransform::Flipped90 => "flipped90",
+        packet_client::WlxMouseTransform::Flipped180 => "flipped180",
+        packet_client::WlxMouseTransform::Flipped270 => "flipped270",
+    }
+}
+
+pub async fn wlx_window_attrib_set(
+    state: &mut WayVRClientState,
+    overlay: String,
+    attrib: packet_client::WlxWindowAttrib,
+    value: packet_client::WlxWindowAttribValue,
+) -> anyhow::Result<()> {
+    let result = WayVRClient::fn_wlx_window_attrib_set(
+        state.wayvr_client.clone(),
+        state.serial_generator.increment_get(),
+        packet_client::WlxWindowAttribSetParams {
+            overlay,
+            attrib,
+            value,
+        },
+    )
+    .await
+    .context("failed to set window attrib")?;
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(reason) => anyhow::bail!("{reason}"),
+    }
 }

@@ -321,19 +321,32 @@ impl WayVRClient {
 		}
 	}
 
-	pub async fn fn_wvr_window_list(
+	pub async fn fn_wlx_overlay_list(
 		client: WayVRClientMutex,
 		serial: Serial,
-	) -> anyhow::Result<Option<Vec<packet_server::WvrWindow>>> {
+		params: packet_client::WlxOverlayListParams,
+	) -> anyhow::Result<Vec<String>> {
 		Ok(
 			send_and_wait!(
 				client,
 				serial,
-				&PacketClient::WvrWindowList(serial),
-				WvrWindowListResponse
+				&PacketClient::WlxOverlayList(serial, params),
+				WlxOverlayListResponse
 			)
-			.map(|res| res.list),
+			.list,
 		)
+	}
+
+	pub async fn fn_wlx_overlay_set_visible(
+		client: WayVRClientMutex,
+		overlay: String,
+		visible: bool,
+	) -> anyhow::Result<()> {
+		send_only!(
+			client,
+			&PacketClient::WlxOverlaySetVisible(overlay, visible)
+		);
+		Ok(())
 	}
 
 	pub async fn fn_wvr_window_set_visible(
@@ -448,6 +461,53 @@ impl WayVRClient {
 	) -> anyhow::Result<()> {
 		send_only!(client, &PacketClient::WlxModifyPanel(params));
 		Ok(())
+	}
+
+	pub async fn fn_wlx_window_state_get(
+		client: WayVRClientMutex,
+		serial: Serial,
+		params: packet_client::WlxWindowStateGetParams,
+	) -> anyhow::Result<Result<packet_client::WlxWindowStateValue, String>> {
+		Ok(send_and_wait!(
+			client,
+			serial,
+			&PacketClient::WlxWindowStateGet(serial, params),
+			WlxWindowStateGetResponse
+		))
+	}
+
+	pub async fn fn_wlx_window_state_set(
+		client: WayVRClientMutex,
+		params: packet_client::WlxWindowStateSetParams,
+	) -> anyhow::Result<()> {
+		send_only!(client, &PacketClient::WlxWindowStateSet(params));
+		Ok(())
+	}
+
+	pub async fn fn_wlx_window_attrib_get(
+		client: WayVRClientMutex,
+		serial: Serial,
+		params: packet_client::WlxWindowAttribGetParams,
+	) -> anyhow::Result<Result<packet_client::WlxWindowAttribValue, String>> {
+		Ok(send_and_wait!(
+			client,
+			serial,
+			&PacketClient::WlxWindowAttribGet(serial, params),
+			WlxWindowAttribGetResponse
+		))
+	}
+
+	pub async fn fn_wlx_window_attrib_set(
+		client: WayVRClientMutex,
+		serial: Serial,
+		params: packet_client::WlxWindowAttribSetParams,
+	) -> anyhow::Result<Result<(), String>> {
+		Ok(send_and_wait!(
+			client,
+			serial,
+			&PacketClient::WlxWindowAttribSet(serial, params),
+			WlxWindowAttribSetResponse
+		))
 	}
 }
 

@@ -136,6 +136,13 @@
 		"HANDSFREE_POINTER_HELP": "Input to use when motion\ncontrollers are unavailable.\nLeft pinch is grab, right is click.",
 		"HANDSFREE_ALT_TAB": "App switcher aim",
 		"HANDSFREE_ALT_TAB_HELP": "Hold Super+X, aim at the desired window, then release to switch focus.",
+		"DIAGNOSTICS": "Diagnostics",
+		"DIAGNOSTICS_REASON": {
+			"PACTL": "Required for speaker/microphone control and audio card switching",
+			"CAGE": "Recommended in case if there's an incompatibility with some X11 applications (Compatibility mode)",
+			"XWAYLAND_SATELLITE": "Recommended in case if you want to run X11 (Xwayland) applications in native mode",
+			"XDG_OPEN": "Required for opening URLs or Steam games"
+		},
 		"HIDE_GRAB_HELP": "Hide grab help",
 		"HIDE_USERNAME": "Hide username",
 		"INPUT_EMULATION_METHOD": "Input emulation method",
@@ -158,6 +165,8 @@
 		"LONG_PRESS_DURATION": "Long press duration",
 		"LOOK_AND_FEEL": "Look & Feel",
 		"MISC": "Miscellaneous",
+		"MIDDLE_GRABS_SINGLE": "Middle-click modifier grabs individual",
+		"MIDDLE_GRABS_SINGLE_HELP": "Grabbing with the middle-click modifier (purple laser)\nwill grab individual overlays, not the entire set",
 		"NOTIFICATIONS_ENABLED": "Enable notifications",
 		"NOTIFICATIONS_SOUND_ENABLED": "Notification sounds",
 		"NOT_SUPPORTED": "Not supported",
@@ -359,5 +368,7 @@
 	"ADD_TO_FAVOURITES": "Add to pinned apps",
 	"ADD_TO_FAVOURITES_HINT": "Save preset and pin it to the app drawer",
 	"REMOVE_FROM_FAVOURITES": "Remove from pinned apps",
-	"EMPTY": "Empty"
+	"EMPTY": "Empty",
+	"INSTALLED": "Installed",
+	"NOT_INSTALLED": "Not installed"
 }

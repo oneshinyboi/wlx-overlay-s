@@ -19,7 +19,7 @@ mod widget_rectangle;
 mod widget_sprite;
 
 use crate::{
-	assets::{AssetPath, AssetPathOwned, AssetPathRc, normalize_path},
+	assets::{AssetPathRc, AssetPathRef, AssetPathSource, normalize_path},
 	components::{Component, ComponentWeak},
 	globals::WguiGlobals,
 	i18n::Translation,
@@ -46,7 +46,12 @@ use crate::{
 use anyhow::Context;
 use ouroboros::self_referencing;
 use smallvec::SmallVec;
-use std::{cell::RefMut, collections::HashMap, path::Path, rc::Rc};
+use std::{
+	cell::RefMut,
+	collections::HashMap,
+	path::{Path, PathBuf},
+	rc::Rc,
+};
 
 #[self_referencing]
 struct XmlDocument {
@@ -60,13 +65,38 @@ struct XmlDocument {
 pub struct Template {
 	node_document: Rc<XmlDocument>,
 	node: roxmltree::NodeId, // belongs to node_document which could be included in another file
+	root_dir: AssetPathRc,
+	xml_path_source: AssetPathSource,
+	xml_path: AssetPathRc,
+	xml_dir: AssetPathRc,
 }
 
 #[derive(Clone, Default)]
 pub struct TemplateParams(HashMap<Rc<str>, Rc<str>>);
 
+// Changelog:
+// v1: source paths are always relative to the assets root
+//
+// v2: added "@/" prefix for paths relative to the assets root;
+// bare paths (e.g. "./foo/bar" or "foo/bar" remain relative to the currently parsing XML file
+//
+#[derive(Clone, Copy)]
+pub struct Version(u32);
+
 struct ParserFile {
-	path: AssetPathOwned,
+	version: Version,
+
+	// used for path expansion, see expand_path fn.
+	// For internal and builtin paths:           '@' always expands to '/`.
+	// For xml files residing on the filesystem: '@' expands to the user-defined xml
+	root_dir: AssetPathRc,
+
+	// Where this xml file resides (internal/builtin/filesystem)
+	// notice there's no FileOrBuiltIn, we've already resolved it here.
+	xml_path_source: AssetPathSource,
+
+	xml_path: AssetPathRc,
+	xml_dir: AssetPathRc,
 	document: Rc<XmlDocument>,
 	template_parameters: TemplateParams,
 }
@@ -228,10 +258,13 @@ impl Fetchable for ParserData {
 	WARNING: this struct could contain valid components with already bound listener handles.
 	Make sure to store them somewhere in your code.
 */
-#[derive(Default)]
 pub struct ParserState {
+	version: Version,
+	xml_path_source: AssetPathSource,
 	pub data: ParserData,
-	pub path: AssetPathOwned,
+	pub root_dir: AssetPathRc,
+	pub xml_path: AssetPathRc, // path of the currently processing xml file
+	pub xml_dir: AssetPathRc,  // same as xml_path, but with stripped filename
 }
 
 impl ParserState {
@@ -273,7 +306,7 @@ impl ParserState {
 		let Some(template) = self.data.templates.get(template_name) else {
 			anyhow::bail!(
 				"{:?}: no template named \"{template_name}\" found",
-				self.path.get_path_buf().display()
+				self.xml_path.get_path().display()
 			);
 		};
 
@@ -286,11 +319,15 @@ impl ParserState {
 
 		let file = ParserFile {
 			document: template.node_document.clone(),
-			path: self.path.clone(),
+			xml_path_source: self.xml_path_source,
+			xml_path: self.xml_path.clone(),
+			xml_dir: self.xml_dir.clone(),
+			root_dir: self.root_dir.clone(),
 			template_parameters: template_parameters.clone(), // FIXME: prevent copying
+			version: self.version,
 		};
 
-		parse_widget_other_internal(&template.clone(), template_parameters, &file, &mut ctx, widget_id)?;
+		let _ = parse_widget_other_internal(&template.clone(), template_parameters, &file, &mut ctx, widget_id)?;
 		Ok(ctx.data_local)
 	}
 
@@ -377,7 +414,7 @@ impl ParserState {
 					});
 				}
 				other => {
-					anyhow::bail!("{:?}: unexpected <{other}> tag", self.path.get_path_buf().display());
+					anyhow::bail!("{:?}: unexpected <{other}> tag", self.xml_path.get_path().display());
 				}
 			}
 		}
@@ -584,6 +621,16 @@ impl ParserContext<'_> {
 		}
 	}
 
+	fn parse_check_bool(&self, tag_name: &str, key: &str, value: &str, num: &mut bool) -> bool {
+		if let Some(value) = parse_bool(value) {
+			*num = value;
+			true
+		} else {
+			self.print_invalid_attrib(tag_name, key, value);
+			false
+		}
+	}
+
 	fn parse_check_i32(&self, tag_name: &str, key: &str, value: &str, num: &mut i32) -> bool {
 		if let Some(value) = parse_i32(value) {
 			*num = value;
@@ -602,6 +649,16 @@ impl ParserContext<'_> {
 			self.print_invalid_attrib(tag_name, key, value);
 			false
 		}
+	}
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+	match value {
+		"true" => Some(true),
+		"false" => Some(false),
+		"1" => Some(true),
+		"0" => Some(false),
+		_ => None,
 	}
 }
 
@@ -631,11 +688,15 @@ fn parse_widget_other_internal(
 	file: &ParserFile,
 	ctx: &mut ParserContext,
 	parent_id: WidgetID,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ParseChildResult> {
 	let template_file = ParserFile {
 		document: template.node_document.clone(),
-		path: file.path.clone(),
+		version: file.version,
 		template_parameters,
+		root_dir: template.root_dir.clone(),
+		xml_path_source: template.xml_path_source,
+		xml_path: template.xml_path.clone(),
+		xml_dir: template.xml_dir.clone(),
 	};
 
 	let doc = template_file.document.clone();
@@ -645,15 +706,14 @@ fn parse_widget_other_internal(
 		.get_node(template.node)
 		.context("template node invalid")?;
 
-	parse_children(&template_file, ctx, template_node, parent_id)?;
-
-	Ok(())
+	parse_children(&template_file, ctx, template_node, parent_id)
 }
 
-fn parse_widget_other(
+fn parse_widget_other<'a>(
 	xml_tag_name: &str,
 	file: &ParserFile,
 	ctx: &mut ParserContext,
+	node: roxmltree::Node<'a, 'a>,
 	parent_id: WidgetID,
 	attribs: &[AttribPair],
 ) -> anyhow::Result<()> {
@@ -668,13 +728,113 @@ fn parse_widget_other(
 	let template_params: HashMap<Rc<str>, Rc<str>> =
 		attribs.iter().map(|a| (a.attrib.clone(), a.value.clone())).collect();
 
-	parse_widget_other_internal(
+	// parse template body
+	let res = parse_widget_other_internal(
 		&template,
 		TemplateParams::from_hashmap(template_params),
 		file,
 		ctx,
 		parent_id,
-	)
+	)?;
+
+	if let Some(children_parent_id) = res.template_children_parent_id {
+		let _ = parse_children(file, ctx, node, children_parent_id)?;
+	}
+
+	Ok(())
+}
+
+fn strip_starting_slash(input: &str) -> &str {
+	if let Some(c) = input.chars().next()
+		&& c == '/'
+	{
+		return &input[1..];
+	}
+	input
+}
+
+pub struct ExpandPathParams<'a> {
+	pub version: Version,
+	pub root_dir: &'a AssetPathRc,
+	pub xml_dir: &'a AssetPathRc,
+}
+
+impl<'a> ExpandPathParams<'a> {
+	pub const fn from_parser_state(state: &'a ParserState) -> ExpandPathParams<'a> {
+		ExpandPathParams {
+			version: state.version,
+			root_dir: &state.root_dir,
+			xml_dir: &state.xml_dir,
+		}
+	}
+}
+
+// rename "@/foo/bar" to "foo/bar"
+pub fn strip_path_as(source: AssetPathSource, path: &str) -> Option<AssetPathRef<'_>> {
+	let first_ch = path.chars().next()?;
+
+	if path.len() < 3 {
+		return None;
+	}
+
+	let ret_path = if first_ch == '@' { &path[2..] } else { path };
+
+	Some(match source {
+		AssetPathSource::Internal => AssetPathRef::WguiInternal(ret_path),
+		AssetPathSource::BuiltIn => AssetPathRef::BuiltIn(ret_path),
+		AssetPathSource::Filesystem => AssetPathRef::File(ret_path),
+	})
+}
+
+pub fn expand_path(par: &ExpandPathParams, path_source: AssetPathSource, path_string: &str) -> PathBuf {
+	if par.version.0 <= 1 {
+		return normalize_path(Path::new(path_string), false);
+	}
+
+	if let Some(c) = path_string.chars().next()
+		&& c == '@'
+	{
+		let path_without_at = &path_string[1..];
+		let rel_path = strip_starting_slash(path_without_at);
+
+		let joined = match path_source {
+			AssetPathSource::Internal | AssetPathSource::BuiltIn => PathBuf::from(rel_path),
+			AssetPathSource::Filesystem => par.root_dir.get_path().join(rel_path),
+		};
+
+		return normalize_path(&joined, false);
+	}
+
+	let relative_dir = par.xml_dir.get_path();
+	normalize_path(&relative_dir.join(path_string), false)
+}
+
+// attrib needs to be "src_internal", "src_builtin", "src_ext" or "src"
+fn expand_path_from_kv(file: &ParserFile, attrib: &str, value: &str) -> AssetPathRc {
+	let par = ExpandPathParams {
+		version: file.version,
+		root_dir: &file.root_dir,
+		xml_dir: &file.xml_dir,
+	};
+
+	match attrib {
+		"src_internal" => AssetPathRc::WguiInternal(expand_path(&par, AssetPathSource::Internal, value).into()),
+		"src_builtin" => AssetPathRc::BuiltIn(expand_path(&par, AssetPathSource::BuiltIn, value).into()),
+		"src" => AssetPathRc::FileOrBuiltIn(
+			expand_path(
+				&par,
+				if file.xml_path_source == AssetPathSource::Filesystem {
+					AssetPathSource::Filesystem // use filesystem for src="..." if the xml file resides on the filesystem too
+				} else {
+					AssetPathSource::BuiltIn // use builtin
+				},
+				value,
+			)
+			.into(),
+		),
+		"src_ext" => AssetPathRc::File(expand_path(&par, AssetPathSource::Filesystem, value).into()),
+		_ => unreachable!(),
+	}
 }
 
 fn parse_tag_include(
@@ -692,31 +852,10 @@ fn parse_tag_include(
 		#[allow(clippy::single_match)]
 		match pair.attrib.as_ref() {
 			"src" | "src_ext" | "src_builtin" | "src_internal" => {
-				path = Some({
-					let this = &file.path.clone();
-					let include: &str = &pair.value;
-					let buf = this.get_path_buf();
-					let mut new_path = buf.parent().unwrap_or_else(|| Path::new("/")).to_path_buf();
-					new_path.push(include);
-					let new_path = normalize_path(&new_path);
-
-					match pair.attrib.as_ref() {
-						"src" => match this {
-							AssetPathOwned::WguiInternal(_) => AssetPathOwned::WguiInternal(new_path),
-							AssetPathOwned::BuiltIn(_) => AssetPathOwned::BuiltIn(new_path),
-							AssetPathOwned::FileOrBuiltIn(_) => AssetPathOwned::FileOrBuiltIn(new_path),
-							AssetPathOwned::File(_) => AssetPathOwned::File(new_path),
-						},
-						"src_ext" => AssetPathOwned::File(new_path),
-						"src_builtin" => AssetPathOwned::BuiltIn(new_path),
-						"src_internal" => AssetPathOwned::WguiInternal(new_path),
-						_ => unreachable!(),
-					}
-				});
+				path = Some(expand_path_from_kv(file, &pair.attrib, &pair.value));
 			}
 			"optional" => {
-				let mut optional_i32 = 0;
-				optional = ctx.parse_check_i32(TAG_NAME, &pair.attrib, &pair.value, &mut optional_i32) && optional_i32 == 1;
+				ctx.parse_check_bool(TAG_NAME, &pair.attrib, &pair.value, &mut optional);
 			}
 			_ => {
 				ctx.print_invalid_attrib(TAG_NAME, pair.attrib.as_ref(), pair.value.as_ref());
@@ -729,7 +868,7 @@ fn parse_tag_include(
 		return Ok(());
 	};
 	let path_ref = path.as_ref();
-	match get_doc_from_asset_path(ctx, path_ref) {
+	match get_doc_from_xml_asset_path(ctx, &file.root_dir, path_ref) {
 		Ok((new_file, node_layout)) => parse_document_root(&new_file, ctx, parent_id, node_layout)?,
 		Err(e) => {
 			if !optional {
@@ -797,7 +936,12 @@ pub fn replace_vars(input: &str, vars: &TemplateParams) -> Rc<str> {
 
 #[allow(clippy::manual_strip)]
 #[allow(clippy::single_match_else)]
-fn process_attrib(template_parameters: &TemplateParams, ctx: &ParserContext, key: &str, value: &str) -> AttribPair {
+fn process_attrib_internal(
+	template_parameters: &TemplateParams,
+	ctx: &ParserContext,
+	key: &str,
+	value: &str,
+) -> AttribPair {
 	if value.starts_with('~') {
 		let name = &value[1..];
 
@@ -811,6 +955,19 @@ fn process_attrib(template_parameters: &TemplateParams, ctx: &ParserContext, key
 	} else {
 		AttribPair::new(key, replace_vars(value, template_parameters))
 	}
+}
+
+fn process_attrib(
+	template_parameters: &TemplateParams,
+	ctx: &ParserContext,
+	key: &str,
+	value: &str,
+) -> Option<AttribPair> {
+	let pair = process_attrib_internal(template_parameters, ctx, key, value);
+	if pair.value.is_empty() {
+		return None;
+	}
+	Some(pair)
 }
 
 fn raw_attribs<'a>(node: &'a roxmltree::Node<'a, 'a>) -> Vec<AttribPair> {
@@ -840,7 +997,9 @@ fn process_attribs<'a>(
 		if key == "macro" {
 			if let Some(macro_attrib) = ctx.get_macro_attrib(value) {
 				for (macro_key, macro_value) in &macro_attrib.attribs {
-					res.push(process_attrib(&file.template_parameters, ctx, macro_key, macro_value));
+					if let Some(pair) = process_attrib(&file.template_parameters, ctx, macro_key, macro_value) {
+						res.push(pair);
+					}
 				}
 			} else {
 				log::warn!(
@@ -848,15 +1007,15 @@ fn process_attribs<'a>(
 					ctx.doc_params.path.get_str()
 				);
 			}
-		} else {
-			res.push(process_attrib(&file.template_parameters, ctx, key, value));
+		} else if let Some(pair) = process_attrib(&file.template_parameters, ctx, key, value) {
+			res.push(pair);
 		}
 	}
 
 	res
 }
 
-fn parse_tag_theme<'a>(ctx: &mut ParserContext, node: roxmltree::Node<'a, 'a>) {
+fn parse_tag_vars<'a>(ctx: &mut ParserContext, node: roxmltree::Node<'a, 'a>) {
 	for child_node in node.children() {
 		let child_name = child_node.tag_name().name();
 		match child_name {
@@ -866,7 +1025,7 @@ fn parse_tag_theme<'a>(ctx: &mut ParserContext, node: roxmltree::Node<'a, 'a>) {
 			"" => { /* ignore */ }
 			_ => {
 				log::warn!(
-					"{}: <{child_name}> is not a valid child to <theme>.",
+					"{}: <{child_name}> is not a valid child to <vars>.",
 					ctx.doc_params.path.get_str()
 				);
 			}
@@ -900,6 +1059,10 @@ fn parse_tag_template(file: &ParserFile, ctx: &mut ParserContext, node: roxmltre
 		Rc::new(Template {
 			node: node.id(),
 			node_document: file.document.clone(),
+			root_dir: file.root_dir.clone(),
+			xml_path_source: file.xml_path_source,
+			xml_path: file.xml_path.clone(),
+			xml_dir: file.xml_dir.clone(),
 		}),
 	);
 }
@@ -990,98 +1153,116 @@ fn parse_child<'a>(
 	ctx: &mut ParserContext,
 	child_node: roxmltree::Node<'a, 'a>,
 	parent_id: WidgetID,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ParseChildResult> {
 	let tag_name = child_node.tag_name().name();
-	if let Some(skip) = child_node.attribute("skip") {
-		let resolved = process_attrib(&file.template_parameters, ctx, "skip", skip).value;
-		//FIXME: this is always empty
+	if let Some(skip) = child_node.attribute("skip")
+		&& let Some(pair) = process_attrib(&file.template_parameters, ctx, "skip", skip)
+	{
+		let resolved = pair.value;
 		if &*resolved == "1" {
-			return Ok(()); // do not parse this element
+			return Ok(ParseChildResult::default()); // do not parse this element
 		}
 	}
 
 	let attribs = process_attribs(file, ctx, &child_node, false);
-	let mut new_widget_id: Option<WidgetID> = None;
 
-	match tag_name {
+	let (res, new_widget_id) = match tag_name {
 		"include" => {
 			parse_tag_include(file, ctx, parent_id, &attribs)?;
+			(ParseChildResult::default(), None)
 		}
 		"div" => {
-			new_widget_id = Some(parse_widget_div(file, ctx, child_node, parent_id, &attribs, tag_name)?);
+			let (res, id) = parse_widget_div(file, ctx, child_node, parent_id, &attribs, tag_name)?;
+			(res, Some(id))
 		}
 		"rectangle" => {
-			new_widget_id = Some(parse_widget_rectangle(
-				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
+			let (res, id) = parse_widget_rectangle(file, ctx, child_node, parent_id, &attribs, tag_name)?;
+			(res, Some(id))
 		}
 		"label" => {
-			new_widget_id = Some(parse_widget_label(
-				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
+			let (res, id) = parse_widget_label(file, ctx, child_node, parent_id, &attribs, tag_name)?;
+			(res, Some(id))
 		}
 		"sprite" => {
-			new_widget_id = Some(parse_widget_sprite(
-				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
+			let (res, id) = parse_widget_sprite(file, ctx, child_node, parent_id, &attribs, tag_name)?;
+			(res, Some(id))
 		}
 		"image" => {
-			new_widget_id = Some(parse_widget_image(
-				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
+			let (res, id) = parse_widget_image(file, ctx, child_node, parent_id, &attribs, tag_name)?;
+			(res, Some(id))
 		}
 		"Button" => {
-			new_widget_id = Some(parse_component_button(
-				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
+			let (res, id) = parse_component_button(file, ctx, child_node, parent_id, &attribs, tag_name)?;
+			(res, Some(id))
 		}
 		#[cfg(feature = "video")]
 		"Video" => {
 			use crate::parser::component_video::parse_component_video;
-
-			new_widget_id = Some(parse_component_video(
-				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
+			let (res, id) = parse_component_video(file, ctx, child_node, parent_id, &attribs, tag_name)?;
+			(res, Some(id))
 		}
-		"Slider" => {
-			new_widget_id = Some(parse_component_slider(ctx, parent_id, &attribs, tag_name)?);
-		}
-		"ColorSelector" => new_widget_id = Some(parse_component_color_selector(ctx, parent_id, &attribs, tag_name)?),
-		"CheckBox" => {
-			new_widget_id = Some(parse_component_checkbox(
+		"Slider" => (
+			Default::default(),
+			Some(parse_component_slider(ctx, parent_id, &attribs, tag_name)?),
+		),
+		"ColorSelector" => (
+			Default::default(),
+			Some(parse_component_color_selector(ctx, parent_id, &attribs, tag_name)?),
+		),
+		"CheckBox" => (
+			Default::default(),
+			Some(parse_component_checkbox(
 				ctx,
 				parent_id,
 				&attribs,
 				tag_name,
 				CheckboxKind::CheckBox,
-			)?);
-		}
-		"RadioBox" => {
-			new_widget_id = Some(parse_component_checkbox(
+			)?),
+		),
+		"RadioBox" => (
+			Default::default(),
+			Some(parse_component_checkbox(
 				ctx,
 				parent_id,
 				&attribs,
 				tag_name,
 				CheckboxKind::RadioBox,
-			)?);
-		}
-		"RadioGroup" => {
-			new_widget_id = Some(parse_component_radio_group(
+			)?),
+		),
+		"RadioGroup" => (
+			Default::default(),
+			Some(parse_component_radio_group(
 				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
-		}
-		"EditBox" => new_widget_id = Some(parse_component_editbox(ctx, parent_id, &attribs, tag_name)?),
-		"BarGraph" => new_widget_id = Some(parse_component_bar_graph(ctx, parent_id, &attribs, tag_name)?),
-		"Tabs" => {
-			new_widget_id = Some(parse_component_tabs(
+			)?),
+		),
+		"EditBox" => (
+			Default::default(),
+			Some(parse_component_editbox(ctx, parent_id, &attribs, tag_name)?),
+		),
+		"BarGraph" => (
+			Default::default(),
+			Some(parse_component_bar_graph(ctx, parent_id, &attribs, tag_name)?),
+		),
+		"Tabs" => (
+			Default::default(),
+			Some(parse_component_tabs(
 				file, ctx, child_node, parent_id, &attribs, tag_name,
-			)?);
+			)?),
+		),
+		"CHILDREN" => (
+			ParseChildResult {
+				template_children_parent_id: Some(parent_id),
+			},
+			None,
+		),
+		"" => {
+			(Default::default(), None) /* ignore */
 		}
-		"" => { /* ignore */ }
 		other_tag_name => {
-			parse_widget_other(other_tag_name, file, ctx, parent_id, &attribs)?;
+			parse_widget_other(other_tag_name, file, ctx, child_node, parent_id, &attribs)?;
+			(Default::default(), None)
 		}
-	}
+	};
 
 	// check for custom attributes (if the callback is set)
 	if let Some(widget_id) = new_widget_id
@@ -1106,7 +1287,28 @@ fn parse_child<'a>(
 		}
 	}
 
-	Ok(())
+	Ok(res)
+}
+
+#[must_use]
+#[derive(Default)]
+struct ParseChildResult {
+	// parent widget id of <CHILDREN/> tag
+	// available only if we're parsing a template
+	template_children_parent_id: Option<WidgetID>,
+}
+
+impl ParseChildResult {
+	#[allow(clippy::needless_pass_by_value)]
+	fn consume(&mut self, res: ParseChildResult) {
+		if let Some(id) = res.template_children_parent_id {
+			if self.template_children_parent_id.is_some() {
+				log::warn!("Found more than a single <CHILDREN/> instance in a template");
+			}
+
+			self.template_children_parent_id = Some(id);
+		}
+	}
 }
 
 fn parse_children<'a>(
@@ -1114,12 +1316,14 @@ fn parse_children<'a>(
 	ctx: &mut ParserContext,
 	parent_node: roxmltree::Node<'a, 'a>,
 	parent_id: WidgetID,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ParseChildResult> {
+	let mut res = ParseChildResult::default();
+
 	for child_node in parent_node.children() {
-		parse_child(file, ctx, child_node, parent_id)?;
+		res.consume(parse_child(file, ctx, child_node, parent_id)?);
 	}
 
-	Ok(())
+	Ok(res)
 }
 
 fn create_default_context<'a>(
@@ -1217,12 +1421,13 @@ pub struct ParseDocumentExtra {
 	pub on_custom_attribs: Option<OnCustomAttribsFunc>, // all attributes with '_' character prepended
 	pub dev_mode: bool,
 	pub extra_vars: HashMap<Rc<str>, Rc<str>>,
+	pub root_dir: Option<AssetPathRc>,
 }
 
 // filled-in by you in `new_layout_from_assets` function
 pub struct ParseDocumentParams<'a> {
 	pub globals: WguiGlobals,      // mandatory field
-	pub path: AssetPath<'a>,       // mandatory field
+	pub path: AssetPathRef<'a>,    // XML path, mandatory field
 	pub extra: ParseDocumentExtra, // optional field, can be Default-ed
 }
 
@@ -1235,13 +1440,25 @@ pub fn parse_from_assets(
 	let mut ctx = create_default_context(doc_params, layout, &parser_data);
 	ctx.populate_extra_variables(&doc_params.extra.extra_vars);
 
-	let (file, node_layout) = get_doc_from_asset_path(&ctx, doc_params.path)?;
+	let xml_path = doc_params.path.to_rc();
+	let xml_dir = xml_path.strip_filename();
+	let root_dir = if let Some(root_dir) = &doc_params.extra.root_dir {
+		root_dir.clone()
+	} else {
+		xml_path.replace_path(Path::new("/").into())
+	};
+
+	let (file, node_layout) = get_doc_from_xml_asset_path(&ctx, &root_dir, doc_params.path)?;
 	parse_document_root(&file, &mut ctx, parent_id, node_layout)?;
 
 	// move everything essential to the result
 	let result = ParserState {
 		data: std::mem::take(&mut ctx.data_local),
-		path: doc_params.path.to_owned(),
+		xml_path_source: file.xml_path_source,
+		xml_path,
+		xml_dir,
+		root_dir,
+		version: file.version,
 	};
 
 	drop(ctx);
@@ -1259,11 +1476,12 @@ pub fn new_layout_from_assets(
 	Ok((layout, state))
 }
 
-fn get_doc_from_asset_path(
+fn get_doc_from_xml_asset_path(
 	ctx: &ParserContext,
-	asset_path: AssetPath,
+	root_dir: &AssetPathRc,
+	xml_asset_path: AssetPathRef,
 ) -> anyhow::Result<(ParserFile, roxmltree::NodeId)> {
-	let data = ctx.layout.state.globals.get_asset(asset_path)?;
+	let (data, xml_path_source) = ctx.layout.state.globals.get_asset(xml_asset_path)?;
 	let xml = String::from_utf8(data)?;
 
 	let document = Rc::new(XmlDocument::new(xml, |xml| {
@@ -1273,17 +1491,41 @@ fn get_doc_from_asset_path(
 		};
 		roxmltree::Document::parse_with_options(xml, opt)
 			.context("Unable to parse XML")
-			.log_err_with(&asset_path)
+			.log_err_with(&xml_asset_path)
 			.unwrap()
 	}));
 
 	let root = document.borrow_doc().root();
 	let tag_layout = require_tag_by_name(&root, "layout")?;
 
+	let xml_path = xml_asset_path.to_rc();
+	let xml_dir = xml_path.strip_filename();
+
+	#[allow(clippy::useless_let_if_seq)]
+	let mut version = 1;
+
+	if let Some(str_version) = tag_layout.attribute("version") {
+		version = str_version.parse::<u32>()?;
+	}
+
+	if version == 0 || version > 2 {
+		anyhow::bail!("unsupported layout version {version}");
+	}
+
+	if version == 1 {
+		log::warn!(
+			"<layout> without version specified, assuming it's version 1. Update your code by specifying <layout version=\"2\">."
+		);
+	}
+
 	let file = ParserFile {
-		path: asset_path.to_owned(),
 		document: document.clone(),
+		xml_path_source,
 		template_parameters: TemplateParams::new(),
+		root_dir: root_dir.clone(),
+		xml_path,
+		xml_dir,
+		version: Version(version),
 	};
 
 	Ok((file, tag_layout.id()))
@@ -1305,7 +1547,11 @@ fn parse_document_root(
 		match child_node.tag_name().name() {
 			/*  topmost include directly in <layout>  */
 			"include" => parse_tag_include(file, ctx, parent_id, &raw_attribs(&child_node))?,
-			"theme" => parse_tag_theme(ctx, child_node),
+			"vars" => parse_tag_vars(ctx, child_node),
+			"theme" => {
+				log::error!("Using deprecated <theme> tag. Use <vars> instead.");
+				parse_tag_vars(ctx, child_node);
+			}
 			"template" => parse_tag_template(file, ctx, child_node),
 			"blueprint" => parse_tag_template(file, ctx, child_node),
 			"macro" => parse_tag_macro(file, ctx, child_node),
@@ -1314,32 +1560,13 @@ fn parse_document_root(
 	}
 
 	if let Some(tag_elements) = get_tag_by_name(&node_layout, "elements") {
-		parse_children(file, ctx, tag_elements, parent_id)?;
+		let _ = parse_children(file, ctx, tag_elements, parent_id)?;
 	}
 
 	Ok(())
 }
 
-fn get_asset_path_from_kv<'a>(prefix: &str, key: &'a str, value: &'a str) -> AssetPath<'a> {
+fn get_asset_path_from_kv<'a>(file: &ParserFile, prefix: &str, key: &'a str, value: &'a str) -> AssetPathRc {
 	let key = key.strip_prefix(prefix).unwrap_or(key);
-
-	match key {
-		"src" => AssetPath::FileOrBuiltIn(value),
-		"src_ext" => AssetPath::File(value),
-		"src_builtin" => AssetPath::BuiltIn(value),
-		"src_internal" => AssetPath::WguiInternal(value),
-		other => panic!("unexpected attrib {other}"),
-	}
-}
-
-fn get_asset_path_rc_from_kv(prefix: &'static str, key: &str, value: Rc<str>) -> AssetPathRc {
-	let key = key.strip_prefix(prefix).unwrap_or(key);
-
-	match key {
-		"src" => AssetPathRc::FileOrBuiltIn(value),
-		"src_ext" => AssetPathRc::File(value),
-		"src_builtin" => AssetPathRc::BuiltIn(value),
-		"src_internal" => AssetPathRc::WguiInternal(value),
-		other => panic!("unexpected attrib {other}"),
-	}
+	expand_path_from_kv(file, key, value)
 }

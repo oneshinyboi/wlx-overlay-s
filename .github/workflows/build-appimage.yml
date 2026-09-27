@@ -13,10 +13,17 @@ env:
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
-  
+
 jobs:
   build_appimage:
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         working-directory: ./wayvr
@@ -39,5 +46,5 @@ jobs:
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: WayVR-${{ github.ref_name }}-x86_64.AppImage
-          path: ./wayvr/WayVR-x86_64.AppImage
+          name: WayVR-${{ github.ref_name }}-${{ matrix.arch }}.AppImage
+          path: ./wayvr/WayVR-${{ matrix.arch }}.AppImage

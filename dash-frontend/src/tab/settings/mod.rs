@@ -2,7 +2,7 @@ use glam::Vec2;
 use std::{marker::PhantomData, rc::Rc, str::FromStr};
 use strum::{AsRefStr, EnumProperty, EnumString};
 use wgui::{
-	assets::AssetPath,
+	assets::AssetPathRef,
 	color::WguiColorName,
 	components::tabs::ComponentTabs,
 	event::StyleSetRequest,
@@ -35,6 +35,7 @@ use crate::{
 mod macros;
 mod tab_autostart_apps;
 mod tab_controls;
+mod tab_diagnostics;
 mod tab_features;
 mod tab_look_and_feel;
 mod tab_misc;
@@ -53,6 +54,7 @@ pub(crate) enum TabNameEnum {
 	Skybox,
 	SpaceDrag,
 	Statistics,
+	Diagnostics,
 	Troubleshooting,
 }
 
@@ -67,6 +69,7 @@ impl TabNameEnum {
 			"skybox" => Some(TabNameEnum::Skybox),
 			"space_drag" => Some(TabNameEnum::SpaceDrag),
 			"statistics" => Some(TabNameEnum::Statistics),
+			"diagnostics" => Some(TabNameEnum::Diagnostics),
 			"troubleshooting" => Some(TabNameEnum::Troubleshooting),
 			_ => None,
 		}
@@ -370,6 +373,7 @@ pub(crate) enum SettingType {
 	NotificationsEnabled,
 	NotificationsSoundEnabled,
 	OpaqueBackground,
+	MiddleGrabsSingle,
 	MouseAcceleration,
 	PointerLerpFactor,
 	MouseSpeed,
@@ -427,6 +431,7 @@ impl SettingType {
 			Self::NotificationsEnabled => &mut config.notifications_enabled,
 			Self::NotificationsSoundEnabled => &mut config.notifications_sound_enabled,
 			Self::OpaqueBackground => &mut config.opaque_background,
+			Self::MiddleGrabsSingle => &mut config.middle_grabs_single,
 			Self::MouseAcceleration => &mut config.wvr_mouse_acceleration,
 			Self::ScreenRenderDown => &mut config.screen_render_down,
 			Self::SetsOnWatch => &mut config.sets_on_watch,
@@ -578,6 +583,7 @@ impl SettingType {
 			Self::NotificationsEnabled => Ok("APP_SETTINGS.NOTIFICATIONS_ENABLED"),
 			Self::NotificationsSoundEnabled => Ok("APP_SETTINGS.NOTIFICATIONS_SOUND_ENABLED"),
 			Self::OpaqueBackground => Ok("APP_SETTINGS.OPAQUE_BACKGROUND"),
+			Self::MiddleGrabsSingle => Ok("APP_SETTINGS.MIDDLE_GRABS_SINGLE"),
 			Self::MouseSpeed => Ok("APP_SETTINGS.POINTER_SPEED"),
 			Self::MouseAcceleration => Ok("APP_SETTINGS.POINTER_ACCELERATION"),
 			Self::PointerLerpFactor => Ok("APP_SETTINGS.POINTER_LERP_FACTOR"),
@@ -628,6 +634,7 @@ impl SettingType {
 			Self::KeyboardMiddleClick => Some("APP_SETTINGS.KEYBOARD_MIDDLE_CLICK_HELP"),
 			Self::KeyboardSwipeToTypeEnabled => Some("APP_SETTINGS.KEYBOARD_SWIPE_TO_TYPE_ENABLED_HELP"),
 			Self::LeftHandedMouse => Some("APP_SETTINGS.LEFT_HANDED_MOUSE_HELP"),
+			Self::MiddleGrabsSingle => Some("APP_SETTINGS.MIDDLE_GRABS_SINGLE_HELP"),
 			Self::MouseAcceleration => Some("APP_SETTINGS.POINTER_ACCELERATION_HELP"),
 			Self::ScreenRenderDown => Some("APP_SETTINGS.SCREEN_RENDER_DOWN_HELP"),
 			Self::SnapAngleDeg => Some("APP_SETTINGS.SNAP_ANGLE_DEG_HELP"),
@@ -713,7 +720,7 @@ fn mount_requires_restart(layout: &mut Layout, parent: WidgetID) -> anyhow::Resu
 fn doc_params(globals: &'_ WguiGlobals) -> ParseDocumentParams<'_> {
 	ParseDocumentParams {
 		globals: globals.clone(),
-		path: AssetPath::BuiltIn("gui/tab/settings.xml"),
+		path: AssetPathRef::BuiltIn("gui/tab/settings.xml"),
 		extra: Default::default(),
 	}
 }
@@ -775,6 +782,9 @@ impl<T> TabSettings<T> {
 			TabNameEnum::Statistics => {
 				self.current_tab = Some(Box::new(tab_statistics::State::mount(settings_mount_params)?));
 			}
+			TabNameEnum::Diagnostics => {
+				self.current_tab = Some(Box::new(tab_diagnostics::State::mount(settings_mount_params)?));
+			}
 		}
 
 		Ok(())
@@ -783,7 +793,7 @@ impl<T> TabSettings<T> {
 	pub fn new(frontend: &mut Frontend<T>, parent_id: WidgetID, data: &mut T) -> anyhow::Result<Self> {
 		let doc_params = ParseDocumentParams {
 			globals: frontend.layout.state.globals.clone(),
-			path: AssetPath::BuiltIn("gui/tab/settings.xml"),
+			path: AssetPathRef::BuiltIn("gui/tab/settings.xml"),
 			extra: Default::default(),
 		};
 

@@ -2,7 +2,8 @@ use crate::{
 	color::ParentColor,
 	layout::WidgetID,
 	parser::{
-		AttribPair, ParserContext, ParserFile, get_asset_path_from_kv, parse_children, parse_widget_universal,
+		AttribPair, ParseChildResult, ParserContext, ParserFile, get_asset_path_from_kv, parse_children,
+		parse_widget_universal,
 		style::{parse_color_opt, parse_style},
 	},
 	renderer_vk::text::custom_glyph::CustomGlyphData,
@@ -16,7 +17,7 @@ pub fn parse_widget_sprite<'a>(
 	parent_id: WidgetID,
 	attribs: &[AttribPair],
 	tag_name: &str,
-) -> anyhow::Result<WidgetID> {
+) -> anyhow::Result<(ParseChildResult, WidgetID)> {
 	let mut params = WidgetSpriteParams::default();
 	let style = parse_style(ctx, attribs, tag_name);
 
@@ -25,10 +26,10 @@ pub fn parse_widget_sprite<'a>(
 		let (key, value) = (pair.attrib.as_ref(), pair.value.as_ref());
 		match key {
 			"src" | "src_ext" | "src_builtin" | "src_internal" => {
-				let asset_path = get_asset_path_from_kv("", key, value);
+				let asset_path = get_asset_path_from_kv(file, "", key, value);
 
 				if !value.is_empty() {
-					glyph = match CustomGlyphData::from_assets(&ctx.layout.state.globals, asset_path) {
+					glyph = match CustomGlyphData::from_assets(&ctx.layout.state.globals, asset_path.as_ref()) {
 						Ok(glyph) => Some(glyph),
 						Err(e) => {
 							log::warn!("failed to load {value}: {e}");
@@ -53,7 +54,5 @@ pub fn parse_widget_sprite<'a>(
 	let (widget, _) = ctx.layout.add_child(parent_id, WidgetSprite::create(params), style)?;
 
 	parse_widget_universal(ctx, &widget, attribs, tag_name);
-	parse_children(file, ctx, node, widget.id)?;
-
-	Ok(widget.id)
+	Ok((parse_children(file, ctx, node, widget.id)?, widget.id))
 }

@@ -1,7 +1,8 @@
 use crate::{
 	layout::WidgetID,
 	parser::{
-		AttribPair, ParserContext, ParserFile, get_asset_path_from_kv, parse_children, parse_widget_universal,
+		AttribPair, ParseChildResult, ParserContext, ParserFile, get_asset_path_from_kv, parse_children,
+		parse_widget_universal,
 		style::{parse_color, parse_round, parse_style},
 	},
 	renderer_vk::text::custom_glyph::CustomGlyphData,
@@ -15,7 +16,7 @@ pub fn parse_widget_image<'a>(
 	parent_id: WidgetID,
 	attribs: &[AttribPair],
 	tag_name: &str,
-) -> anyhow::Result<WidgetID> {
+) -> anyhow::Result<(ParseChildResult, WidgetID)> {
 	let mut params = WidgetImageParams::default();
 	let style = parse_style(ctx, attribs, tag_name);
 	let mut glyph = None;
@@ -25,8 +26,10 @@ pub fn parse_widget_image<'a>(
 		match key {
 			"src" | "src_ext" | "src_builtin" | "src_internal" => {
 				if !value.is_empty() {
-					glyph = match CustomGlyphData::from_assets(&ctx.layout.state.globals, get_asset_path_from_kv("", key, value))
-					{
+					glyph = match CustomGlyphData::from_assets(
+						&ctx.layout.state.globals,
+						get_asset_path_from_kv(file, "", key, value).as_ref(),
+					) {
 						Ok(glyph) => Some(glyph),
 						Err(e) => {
 							log::warn!("failed to load {value}: {e}");
@@ -64,7 +67,5 @@ pub fn parse_widget_image<'a>(
 	let (widget, _) = ctx.layout.add_child(parent_id, WidgetImage::create(params), style)?;
 
 	parse_widget_universal(ctx, &widget, attribs, tag_name);
-	parse_children(file, ctx, node, widget.id)?;
-
-	Ok(widget.id)
+	Ok((parse_children(file, ctx, node, widget.id)?, widget.id))
 }

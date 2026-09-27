@@ -274,9 +274,6 @@ fn auto_run(args: Args, used_backend: &mut Option<XrBackend>) {
 
     #[cfg(not(any(feature = "openvr", feature = "openxr")))]
     compile_error!("No VR support! Enable either openvr or openxr features!");
-
-    #[cfg(not(any(feature = "wayland", feature = "x11")))]
-    compile_error!("No desktop support! Enable either wayland or x11 features!");
 }
 
 #[allow(dead_code, unused_variables)]

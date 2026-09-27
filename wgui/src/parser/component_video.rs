@@ -1,10 +1,10 @@
 use crate::{
-	assets::AssetPath,
+	assets::AssetPathRc,
 	components::{self, Component},
 	layout::WidgetID,
 	parser::{
-		AttribPair, ParserContext, ParserFile, get_asset_path_from_kv, parse_children, parse_f32, parse_i32,
-		process_component, style::parse_style,
+		AttribPair, ParseChildResult, ParserContext, ParserFile, get_asset_path_from_kv, parse_children, parse_f32,
+		parse_i32, process_component, style::parse_style,
 	},
 };
 
@@ -15,8 +15,8 @@ pub fn parse_component_video<'a>(
 	parent_id: WidgetID,
 	attribs: &[AttribPair],
 	tag_name: &str,
-) -> anyhow::Result<WidgetID> {
-	let mut src: Option<AssetPath> = None;
+) -> anyhow::Result<(ParseChildResult, WidgetID)> {
+	let mut src: Option<AssetPathRc> = None;
 	let mut looping: bool = false;
 	let mut speed: f32 = 1.0;
 
@@ -36,7 +36,7 @@ pub fn parse_component_video<'a>(
 				}
 			}
 			"src" | "src_ext" | "src_builtin" | "src_internal" => {
-				let asset_path = get_asset_path_from_kv("", key, value);
+				let asset_path = get_asset_path_from_kv(file, "", key, value);
 
 				if !value.is_empty() {
 					src = Some(asset_path);
@@ -50,14 +50,12 @@ pub fn parse_component_video<'a>(
 		&mut ctx.get_construct_essentials(parent_id),
 		components::video::Params {
 			style,
-			src,
+			src: src.as_ref().map(|s| s.as_ref()),
 			looping,
 			speed,
 		},
 	)?;
 
 	process_component(ctx, Component(video), widget.id, attribs);
-	parse_children(file, ctx, node, widget.id)?;
-
-	Ok(widget.id)
+	Ok((parse_children(file, ctx, node, widget.id)?, widget.id))
 }

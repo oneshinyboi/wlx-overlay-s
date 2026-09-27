@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::ipc::Serial;
+use super::{ipc::Serial, packet_client};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerInfo {}
@@ -39,8 +39,8 @@ pub struct WvrWindow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WvrWindowList {
-	pub list: Vec<WvrWindow>,
+pub struct WlxOverlayList {
+	pub list: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,10 +98,13 @@ pub enum PacketServer {
 	Disconnect(Disconnect),
 	HandshakeSuccess(HandshakeSuccess),
 	WlxInputStateResponse(Serial, WlxInputState),
-	WvrWindowListResponse(Serial, Option<WvrWindowList>),
+	WlxOverlayListResponse(Serial, WlxOverlayList),
 	WvrProcessGetResponse(Serial, Option<WvrProcess>),
 	WvrProcessLaunchResponse(Serial, Result<WvrProcessHandle, String>),
 	WvrProcessListResponse(Serial, WvrProcessList),
+	WlxWindowStateGetResponse(Serial, Result<packet_client::WlxWindowStateValue, String>),
+	WlxWindowAttribGetResponse(Serial, Result<packet_client::WlxWindowAttribValue, String>),
+	WlxWindowAttribSetResponse(Serial, Result<(), String>),
 	WvrStateChanged(WvrStateChanged),
 }
 
@@ -111,10 +114,13 @@ impl PacketServer {
 			PacketServer::Disconnect(_) => None,
 			PacketServer::HandshakeSuccess(_) => None,
 			PacketServer::WlxInputStateResponse(serial, _) => Some(serial),
-			PacketServer::WvrWindowListResponse(serial, _) => Some(serial),
+			PacketServer::WlxOverlayListResponse(serial, _) => Some(serial),
 			PacketServer::WvrProcessGetResponse(serial, _) => Some(serial),
 			PacketServer::WvrProcessLaunchResponse(serial, _) => Some(serial),
 			PacketServer::WvrProcessListResponse(serial, _) => Some(serial),
+			PacketServer::WlxWindowStateGetResponse(serial, _) => Some(serial),
+			PacketServer::WlxWindowAttribGetResponse(serial, _) => Some(serial),
+			PacketServer::WlxWindowAttribSetResponse(serial, _) => Some(serial),
 			PacketServer::WvrStateChanged(_) => None,
 		}
 	}

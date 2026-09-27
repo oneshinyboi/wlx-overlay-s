@@ -257,7 +257,16 @@
 		"STATISTICS": "統計",
 		"ROTATIONS": "HMD回転数",
 		"SESSION_TIME": "セッション時間",
-		"LENS_SEPARATION_MM": "レンズ間隔 (mm)"
+		"LENS_SEPARATION_MM": "レンズ間隔 (mm)",
+		"DIAGNOSTICS": "診断",
+		"MIDDLE_GRABS_SINGLE": "中クリック修飾キーで個別に掴む",
+		"MIDDLE_GRABS_SINGLE_HELP": "中クリック修飾キー（紫色のレーザー）で掴むと、\nセット全体ではなく個別のオーバーレイを掴むことができる",
+		"DIAGNOSTICS_REASON": {
+			"PACTL": "スピーカー・マイクの制御およびオーディオカードの切り替えに必要",
+			"CAGE": "一部のX11アプリで互換性問題が発生する場合に推奨（互換モード）",
+			"XWAYLAND_SATELLITE": "X11 (Xwayland) アプリケーションをネイティブモードで動作させたい場合に推奨",
+			"XDG_OPEN": "URLやSteamゲームの起動に必要"
+		}
 	},
 	"APPLICATION_LAUNCHER": "アプリランチャー",
 	"APPLICATION_STARTED": "アプリが起動しました",
@@ -359,5 +368,7 @@
 	"ADD_TO_FAVOURITES": "固定済みアプリに追加",
 	"ADD_TO_FAVOURITES_HINT": "プリセットを保存し、アプリドロワーに固定する",
 	"REMOVE_FROM_FAVOURITES": "固定済みアプリから外す",
-	"EMPTY": "なし"
+	"EMPTY": "なし",
+	"INSTALLED": "インストール済み",
+	"NOT_INSTALLED": "未インストール"
 }

@@ -95,6 +95,13 @@ pub fn create_screens(app: &mut AppState) -> anyhow::Result<(ScreenCreateData, D
 
         return Ok((x11::create_screens_xshm(app)?, DesktopBackend::X11));
     }
+
     #[cfg(not(feature = "x11"))]
-    anyhow::bail!("No backends left to try.")
+    {
+        log::info!("Starting in headless mode.");
+        Ok((
+            ScreenCreateData { screens: vec![] },
+            DesktopBackend::Headless,
+        ))
+    }
 }

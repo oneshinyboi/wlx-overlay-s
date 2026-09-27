@@ -23,6 +23,34 @@ impl From<crate::HandsfreeAction> for ipc::HandsfreeAction {
     }
 }
 
+impl From<crate::WindowStateField> for ipc::WlxWindowStateField {
+    fn from(field: crate::WindowStateField) -> Self {
+        match field {
+            crate::WindowStateField::Alpha => Self::Alpha,
+            crate::WindowStateField::Grabbable => Self::Grabbable,
+            crate::WindowStateField::Interactable => Self::Interactable,
+            crate::WindowStateField::Positioning => Self::Positioning,
+            crate::WindowStateField::Curvature => Self::Curvature,
+            crate::WindowStateField::Additive => Self::Additive,
+            crate::WindowStateField::BlockInput => Self::BlockInput,
+            crate::WindowStateField::AlignToHmd => Self::AlignToHmd,
+            crate::WindowStateField::Global => Self::Global,
+        }
+    }
+}
+
+impl From<crate::WindowAttrib> for ipc::WlxWindowAttrib {
+    fn from(attrib: crate::WindowAttrib) -> Self {
+        match attrib {
+            crate::WindowAttrib::Stereo => Self::Stereo,
+            crate::WindowAttrib::StereoFullFrame => Self::StereoFullFrame,
+            crate::WindowAttrib::StereoAdjustMouse => Self::StereoAdjustMouse,
+            crate::WindowAttrib::MouseTransform => Self::MouseTransform,
+            crate::WindowAttrib::WindowSize => Self::WindowSize,
+        }
+    }
+}
+
 impl From<crate::SubcommandHandsfree> for ipc::HandsfreeParams {
     fn from(cmd: crate::SubcommandHandsfree) -> Self {
         match cmd {

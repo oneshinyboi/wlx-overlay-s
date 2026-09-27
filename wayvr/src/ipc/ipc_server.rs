@@ -11,6 +11,7 @@ use glam::Vec3A;
 use interprocess::local_socket::{self, ToNsName, traits::Listener};
 use smallvec::SmallVec;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use wayvr_ipc::packet_client::HandsfreeParams;
 use wayvr_ipc::{
     ipc::{self},
@@ -24,7 +25,10 @@ pub struct AuthInfo {
     pub protocol_version: u32, // client protocol version
 }
 
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
+
 pub struct Connection {
+    id: u64,
     alive: bool,
     conn: local_socket::Stream,
     next_packet: Option<u32>,
@@ -103,8 +107,9 @@ pub fn gen_env_vec(input: &[String]) -> Vec<(&str, &str)> {
 }
 
 impl Connection {
-    const fn new(conn: local_socket::Stream) -> Self {
+    fn new(conn: local_socket::Stream) -> Self {
         Self {
+            id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             conn,
             alive: true,
             auth: None,
@@ -190,33 +195,15 @@ impl Connection {
         Ok(())
     }
 
-    fn handle_wvr_window_list(
-        &mut self,
+    fn handle_wlx_overlay_list(
+        &self,
         params: &mut TickParams,
         serial: ipc::Serial,
-    ) -> anyhow::Result<()> {
-        let mut send = |list: Option<packet_server::WvrWindowList>| -> anyhow::Result<()> {
-            send_packet(
-                &mut self.conn,
-                &ipc::data_encode(&PacketServer::WvrWindowListResponse(serial, list)),
-            )
-        };
-
-        send(Some(packet_server::WvrWindowList {
-            list: params
-                .wvr_server
-                .wm
-                .windows
-                .iter()
-                .map(|(handle, win)| packet_server::WvrWindow {
-                    handle: wayvr::window::WindowHandle::as_packet(handle),
-                    process_handle: wayvr::process::ProcessHandle::as_packet(win.process),
-                    size_x: win.size_x,
-                    size_y: win.size_y,
-                    visible: win.visible,
-                })
-                .collect::<Vec<_>>(),
-        }))
+        list_params: packet_client::WlxOverlayListParams,
+    ) {
+        params
+            .signals
+            .send(WayVRSignal::ListOverlays(self.id, serial, list_params));
     }
 
     fn handle_wvr_window_set_visible(
@@ -363,6 +350,52 @@ impl Connection {
         params.signals.send(WayVRSignal::Handsfree(payload));
     }
 
+    fn handle_wlx_window_state_get(
+        &self,
+        params: &mut TickParams,
+        serial: ipc::Serial,
+        get_params: packet_client::WlxWindowStateGetParams,
+    ) {
+        params
+            .signals
+            .send(WayVRSignal::GetWindowState(self.id, serial, get_params));
+    }
+
+    fn handle_wlx_window_state_set(
+        params: &mut TickParams,
+        set_params: packet_client::WlxWindowStateSetParams,
+    ) {
+        params.signals.send(WayVRSignal::SetWindowState(set_params));
+    }
+
+    fn handle_wlx_window_attrib_get(
+        &self,
+        params: &mut TickParams,
+        serial: ipc::Serial,
+        get_params: packet_client::WlxWindowAttribGetParams,
+    ) {
+        params
+            .signals
+            .send(WayVRSignal::GetWindowAttrib(self.id, serial, get_params));
+    }
+
+    fn handle_wlx_window_attrib_set(
+        &self,
+        params: &mut TickParams,
+        serial: ipc::Serial,
+        set_params: packet_client::WlxWindowAttribSetParams,
+    ) {
+        params
+            .signals
+            .send(WayVRSignal::SetWindowAttrib(self.id, serial, set_params));
+    }
+
+    fn handle_wlx_overlay_set_visible(params: &mut TickParams, overlay: String, visible: bool) {
+        params
+            .signals
+            .send(WayVRSignal::SetOverlayVisible(overlay, visible));
+    }
+
     fn handle_wlx_panel(
         params: &mut TickParams,
         custom_params: packet_client::WlxModifyPanelParams,
@@ -410,8 +443,8 @@ impl Connection {
             PacketClient::WlxInputState(serial) => {
                 self.handle_wlx_input_state(params, serial)?;
             }
-            PacketClient::WvrWindowList(serial) => {
-                self.handle_wvr_window_list(params, serial)?;
+            PacketClient::WlxOverlayList(serial, list_params) => {
+                self.handle_wlx_overlay_list(params, serial, list_params);
             }
             PacketClient::WvrWindowSetVisible(window_handle, visible) => {
                 Self::handle_wvr_window_set_visible(params, window_handle, visible);
@@ -445,6 +478,21 @@ impl Connection {
             }
             PacketClient::WlxHandsfree(payload) => {
                 Self::handle_wlx_handsfree(params, payload);
+            }
+            PacketClient::WlxWindowStateGet(serial, get_params) => {
+                self.handle_wlx_window_state_get(params, serial, get_params);
+            }
+            PacketClient::WlxWindowStateSet(set_params) => {
+                Self::handle_wlx_window_state_set(params, set_params);
+            }
+            PacketClient::WlxWindowAttribGet(serial, get_params) => {
+                self.handle_wlx_window_attrib_get(params, serial, get_params);
+            }
+            PacketClient::WlxWindowAttribSet(serial, set_params) => {
+                self.handle_wlx_window_attrib_set(params, serial, set_params);
+            }
+            PacketClient::WlxOverlaySetVisible(overlay, visible) => {
+                Self::handle_wlx_overlay_set_visible(params, overlay, visible);
             }
         }
 
@@ -575,5 +623,17 @@ impl WayVRServer {
     pub fn tick(&mut self, params: &mut TickParams) {
         self.accept_connections();
         self.tick_connections(params);
+    }
+
+    pub fn send_response(&mut self, connection_id: u64, packet: &PacketServer) {
+        if let Some(conn) = self
+            .connections
+            .iter_mut()
+            .find(|c| c.id == connection_id && c.alive)
+        {
+            let _ = send_packet(&mut conn.conn, &ipc::data_encode(packet));
+        } else {
+            log::debug!("Dropping IPC response, connection {connection_id} no longer exists");
+        }
     }
 }
